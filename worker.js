@@ -165,7 +165,7 @@ function makeDNSMobileconfig(host) {
       <key>DNSSettings</key>
       <dict>
         <key>DNSProtocol</key><string>HTTPS</string>
-        <key>ServerURL</key><string>https://${host}/dns-query</string>
+        <key>ServerURL</key><string>https://dns.google/dns-query</string>
         <key>ServerAddresses</key>
         <array>
           <string>8.8.8.8</string>
