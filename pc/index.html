@@ -270,7 +270,7 @@
   let busy = false;
   let on = false;
 
-  function ui(state) {
+  function ui(state, msg) {
     on = state === 'on';
     const tog  = document.getElementById('toggle');
     const slbl = document.getElementById('slbl');
@@ -288,7 +288,7 @@
       slbl.textContent = 'Подождите...';
       slbl.className = 'status-label busy';
       icon.textContent = '⏳';
-      hint.textContent = '';
+      hint.textContent = msg || '';
     } else {
       slbl.textContent = 'Отключено';
       slbl.className = 'status-label';
@@ -296,6 +296,10 @@
       hint.textContent = 'Нажми переключатель\nчтобы подключиться';
     }
   }
+
+  window.api.onStatus((msg) => {
+    document.getElementById('hint').textContent = msg;
+  });
 
   async function toggle() {
     if (busy) return;

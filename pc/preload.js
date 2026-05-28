@@ -8,4 +8,5 @@ contextBridge.exposeInMainWorld('api', {
   status:     () => ipcRenderer.invoke('status'),
   quit:       () => ipcRenderer.invoke('quit'),
   hide:       () => ipcRenderer.invoke('hide'),
+  onStatus:   (cb) => ipcRenderer.on('status-msg', (_e, msg) => cb(msg)),
 });

@@ -20,6 +20,10 @@ jobs:
         working-directory: pc
         run: npm install
 
+      - name: Download xray.exe
+        working-directory: pc
+        run: node scripts/download-xray.js
+
       - name: Build installer
         working-directory: pc
         run: npm run dist

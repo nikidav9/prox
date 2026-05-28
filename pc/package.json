@@ -5,6 +5,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "predist": "node scripts/download-xray.js",
     "dist": "cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win --x64"
   },
   "build": {
@@ -14,6 +15,12 @@
     "directories": {
       "output": "dist"
     },
+    "extraResources": [
+      {
+        "from": "resources/xray.exe",
+        "to": "xray.exe"
+      }
+    ],
     "files": [
       "main.js",
       "preload.js",
