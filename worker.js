@@ -27,10 +27,13 @@ export default {
       if (!VLESS_UUID) return new Response('Not configured', { status: 503 });
       const token = url.searchParams.get('token') || '';
       if (token !== VLESS_UUID) return new Response('Unauthorized', { status: 401 });
+      const tHost = url.searchParams.get('host');
+      const tPort = parseInt(url.searchParams.get('port') || '443', 10);
+      if (!tHost) return new Response('Missing host', { status: 400 });
       if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
         return new Response('WebSocket required', { status: 400 });
       }
-      return handleTunnel(request);
+      return handleTunnel(request, tHost, tPort);
     }
 
     // ── DNS-over-HTTPS (GET and POST) ─────────────────────────────────────────
@@ -222,14 +225,19 @@ async function processVless(ws, uuid) {
 
 // ── Desktop tunnel handler ────────────────────────────────────────────────────
 
-async function handleTunnel(request) {
+async function handleTunnel(request, host, port) {
   const { 0: client, 1: server } = new WebSocketPair();
   server.accept();
-  processTunnel(server).catch(() => { try { server.close(1011, 'err'); } catch (_) {} });
+  processTunnel(server, host, port).catch(() => { try { server.close(1011, 'err'); } catch (_) {} });
   return new Response(null, { status: 101, webSocket: client });
 }
 
-async function processTunnel(ws) {
+async function processTunnel(ws, host, port) {
+  // Connect to target immediately — no JSON round-trip needed
+  let remote;
+  try { remote = connect({ hostname: host, port }); }
+  catch (e) { ws.close(1011, 'connect failed'); return; }
+
   const q = new MsgQueue();
   ws.addEventListener('message', ({ data }) => {
     q.push(data instanceof ArrayBuffer ? new Uint8Array(data)
@@ -238,26 +246,6 @@ async function processTunnel(ws) {
   });
   ws.addEventListener('close', () => q.done());
   ws.addEventListener('error', () => q.done());
-
-  // First message: JSON {"host":"...", "port":N}
-  const headerChunk = await q.next();
-  if (!headerChunk) return;
-  let hdr;
-  try { hdr = JSON.parse(new TextDecoder().decode(headerChunk)); }
-  catch { ws.close(1003, 'bad header'); return; }
-
-  const { host, port } = hdr;
-  if (!host || !port) { ws.close(1003, 'missing fields'); return; }
-
-  let remote;
-  try { remote = connect({ hostname: host, port }); }
-  catch (e) {
-    ws.send(JSON.stringify({ ok: false, error: e.message }));
-    ws.close();
-    return;
-  }
-
-  ws.send(JSON.stringify({ ok: true }));
 
   const toRemote = (async () => {
     const w = remote.writable.getWriter();

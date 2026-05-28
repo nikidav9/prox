@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>prox</title>
+<title>proxVPN</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   body {
     font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
-    background: #111;
-    color: #fff;
+    background: #f2f2f7;
+    color: #1c1c1e;
     height: 100vh;
     display: flex;
     flex-direction: column;
@@ -19,142 +19,251 @@
     overflow: hidden;
   }
 
-  /* ── Title bar ── */
+  /* ── Drag / close ── */
   .titlebar {
+    height: 28px;
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 12px 16px 4px;
+    justify-content: flex-end;
+    padding: 0 14px;
     flex-shrink: 0;
   }
-  .titlebar-title {
-    font-size: 13px;
-    font-weight: 600;
-    color: #636366;
-    letter-spacing: 0.5px;
-  }
-  .titlebar-btns {
-    display: flex;
-    gap: 8px;
-    -webkit-app-region: no-drag;
-  }
-  .tbtn {
+  .close-btn {
     width: 13px; height: 13px;
     border-radius: 50%;
-    border: none;
-    cursor: pointer;
+    background: #ff5f57;
+    border: none; cursor: pointer;
+    -webkit-app-region: no-drag;
     transition: filter .15s;
   }
-  .tbtn:hover { filter: brightness(1.3); }
-  .tbtn.minimize { background: #ffbd2e; }
-  .tbtn.close    { background: #ff5f57; }
+  .close-btn:hover { filter: brightness(1.2); }
 
-  /* ── Main content ── */
-  .content {
+  /* ── Main layout ── */
+  .page {
     flex: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: space-evenly;
-    padding: 0 24px 28px;
+    padding: 0 28px 20px;
+    gap: 0;
   }
 
-  /* ── Logo ── */
-  .logo-wrap { display: flex; flex-direction: column; align-items: center; gap: 10px; }
-  .logo {
-    width: 88px; height: 88px;
-    border-radius: 26px;
-    background: linear-gradient(145deg, #0a84ff 0%, #5e5ce6 100%);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 48px; font-weight: 800; color: #fff;
-    box-shadow: 0 8px 30px rgba(10,132,255,.4);
+  /* ── App name ── */
+  .app-title {
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    margin-bottom: 16px;
+    color: #1c1c1e;
   }
-  .logo-name { font-size: 20px; font-weight: 700; letter-spacing: 1px; }
+  .app-title span {
+    color: #7b68ee;
+  }
 
-  /* ── Server card ── */
-  .card {
-    width: 100%;
-    background: #1c1c1e;
-    border-radius: 16px;
-    padding: 14px 18px;
+  /* ── Mascot circle ── */
+  .mascot-wrap {
+    width: 220px;
+    height: 220px;
+    border-radius: 50%;
+    background: #e4e0ff;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    overflow: hidden;
+    margin-bottom: 24px;
+    flex-shrink: 0;
+    position: relative;
   }
-  .card-head {
-    font-size: 11px; text-transform: uppercase;
-    letter-spacing: .8px; color: #636366; margin-bottom: 10px;
-  }
-  .row {
-    display: flex; justify-content: space-between; align-items: center;
-    padding: 8px 0; border-bottom: 1px solid #2c2c2e;
-  }
-  .row:last-child { border-bottom: none; }
-  .lbl { font-size: 14px; color: #8e8e93; }
-  .val { font-size: 14px; font-weight: 500; }
 
-  /* ── Status ── */
-  .status-wrap { display: flex; flex-direction: column; align-items: center; gap: 8px; }
-  .dot {
-    width: 14px; height: 14px; border-radius: 50%;
-    background: #3a3a3c;
-    transition: background .4s, box-shadow .4s;
-  }
-  .dot.on {
-    background: #30d158;
-    box-shadow: 0 0 0 4px rgba(48,209,88,.18), 0 0 12px rgba(48,209,88,.35);
-  }
-  .dot.busy { background: #ffd60a; box-shadow: 0 0 8px rgba(255,214,10,.4); }
-  .status-lbl {
-    font-size: 14px; color: #636366; transition: color .3s;
-  }
-  .status-lbl.on { color: #30d158; }
-  .status-lbl.busy { color: #ffd60a; }
+  /* ── SVG bear ── */
+  .bear { width: 190px; height: 200px; }
 
-  /* ── Button ── */
-  .btn {
-    width: 100%; padding: 15px;
-    border: none; border-radius: 14px;
-    font-size: 16px; font-weight: 600; color: #fff;
-    background: #0a84ff;
+  /* ── Status label ── */
+  .status-label {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    margin-bottom: 16px;
+    transition: color .3s;
+    color: #8e8e93;
+  }
+  .status-label.on  { color: #7b68ee; }
+  .status-label.busy { color: #ffd60a; }
+
+  /* ── Big iOS toggle ── */
+  .toggle-wrap {
+    width: 180px;
+    height: 86px;
+    background: #e0daf8;
+    border-radius: 43px;
+    padding: 8px;
     cursor: pointer;
-    transition: background .25s, transform .1s, filter .15s;
+    -webkit-app-region: no-drag;
+    position: relative;
+    transition: background .4s;
+    box-shadow: inset 0 2px 8px rgba(0,0,0,.08), 0 4px 16px rgba(123,104,238,.2);
+    margin-bottom: 20px;
+    flex-shrink: 0;
+  }
+  .toggle-wrap.on {
+    background: #7b68ee;
+    box-shadow: inset 0 2px 8px rgba(0,0,0,.1), 0 6px 24px rgba(123,104,238,.45);
+  }
+  .toggle-wrap.busy {
+    cursor: default;
+    opacity: 0.7;
+  }
+  .toggle-knob {
+    width: 70px;
+    height: 70px;
+    border-radius: 50%;
+    background: white;
+    box-shadow: 0 3px 12px rgba(0,0,0,.18);
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    transition: left .35s cubic-bezier(.34,1.4,.64,1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .toggle-wrap.on .toggle-knob {
+    left: calc(100% - 78px);
+  }
+  .knob-icon {
+    font-size: 28px;
+    transition: opacity .2s;
+  }
+
+  /* ── Hint text ── */
+  .hint {
+    font-size: 13px;
+    color: #8e8e93;
+    text-align: center;
+    line-height: 1.5;
+  }
+
+  /* ── Bottom nav ── */
+  .bottom-nav {
+    height: 60px;
+    background: #e8e8ed;
+    border-radius: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+    width: 100%;
+    flex-shrink: 0;
     -webkit-app-region: no-drag;
   }
-  .btn:hover { filter: brightness(1.12); }
-  .btn:active { transform: scale(.97); }
-  .btn.on { background: #ff453a; }
-  .btn:disabled { opacity: .4; cursor: default; transform: none; filter: none; }
+  .nav-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    cursor: pointer;
+    padding: 8px 24px;
+    border-radius: 12px;
+    transition: background .15s;
+  }
+  .nav-item:hover { background: rgba(0,0,0,.05); }
+  .nav-item.active .nav-label { color: #7b68ee; font-weight: 600; }
+  .nav-item svg { width: 22px; height: 22px; }
+  .nav-item.active svg { stroke: #7b68ee; }
+  .nav-item:not(.active) svg { stroke: #8e8e93; }
+  .nav-label { font-size: 11px; color: #8e8e93; }
 </style>
 </head>
 <body>
 
 <div class="titlebar">
-  <span class="titlebar-title">prox</span>
-  <div class="titlebar-btns">
-    <button class="tbtn minimize" onclick="window.api.hide()"></button>
-    <button class="tbtn close"    onclick="window.api.quit()"></button>
-  </div>
+  <button class="close-btn" onclick="window.api.quit()"></button>
 </div>
 
-<div class="content">
+<div class="page">
 
-  <div class="logo-wrap">
-    <div class="logo">P</div>
-    <div class="logo-name">prox</div>
+  <div class="app-title">prox<span>VPN</span></div>
+
+  <!-- Bear mascot in lavender circle -->
+  <div class="mascot-wrap">
+    <svg class="bear" viewBox="0 0 190 200" xmlns="http://www.w3.org/2000/svg">
+      <!-- Body / hoodie -->
+      <ellipse cx="95" cy="195" rx="72" ry="48" fill="#7b68ee"/>
+      <ellipse cx="95" cy="165" rx="42" ry="35" fill="#7b68ee"/>
+      <!-- Hoodie zipper line -->
+      <line x1="95" y1="148" x2="95" y2="195" stroke="#6456d4" stroke-width="2.5" stroke-dasharray="3,3"/>
+      <!-- Shield badge -->
+      <path d="M107 158 L107 168 Q107 173 113 176 Q119 173 119 168 L119 158 Z" fill="white" opacity="0.9"/>
+      <text x="113" y="170" text-anchor="middle" font-size="9" fill="#7b68ee" font-weight="900">V</text>
+
+      <!-- Left ear -->
+      <circle cx="42" cy="68" r="24" fill="#b87040"/>
+      <circle cx="42" cy="68" r="14" fill="#d4916a"/>
+      <!-- Right ear -->
+      <circle cx="148" cy="68" r="24" fill="#b87040"/>
+      <circle cx="148" cy="68" r="14" fill="#d4916a"/>
+
+      <!-- Head -->
+      <circle cx="95" cy="108" r="62" fill="#c07840"/>
+
+      <!-- Muzzle -->
+      <ellipse cx="95" cy="122" rx="36" ry="28" fill="#d4916a"/>
+
+      <!-- Sunglasses frame -->
+      <rect x="52" y="92" width="36" height="20" rx="10" fill="#1a1535" opacity="0.92"/>
+      <rect x="102" y="92" width="36" height="20" rx="10" fill="#1a1535" opacity="0.92"/>
+      <!-- Bridge -->
+      <rect x="88" y="99" width="14" height="4" rx="2" fill="#1a1535" opacity="0.92"/>
+      <!-- Lens shine -->
+      <ellipse cx="63" cy="98" rx="6" ry="4" fill="white" opacity="0.18"/>
+      <ellipse cx="113" cy="98" rx="6" ry="4" fill="white" opacity="0.18"/>
+
+      <!-- Nose -->
+      <ellipse cx="95" cy="118" rx="9" ry="7" fill="#2a1505"/>
+      <!-- Smile -->
+      <path d="M80 130 Q95 143 110 130" stroke="#2a1505" stroke-width="3"
+        fill="none" stroke-linecap="round"/>
+
+      <!-- Cheek blush -->
+      <ellipse cx="65" cy="126" rx="10" ry="6" fill="#e8824a" opacity="0.35"/>
+      <ellipse cx="125" cy="126" rx="10" ry="6" fill="#e8824a" opacity="0.35"/>
+
+      <!-- Folded arms hint -->
+      <ellipse cx="60" cy="178" rx="28" ry="16" fill="#6b5cd6"/>
+      <ellipse cx="130" cy="178" rx="28" ry="16" fill="#6b5cd6"/>
+    </svg>
   </div>
 
-  <div class="card">
-    <div class="card-head">Сервер</div>
-    <div class="row"><span class="lbl">Провайдер</span><span class="val">Cloudflare</span></div>
-    <div class="row"><span class="lbl">Протокол</span><span class="val">WS + TLS</span></div>
-    <div class="row"><span class="lbl">Порт</span><span class="val">443</span></div>
+  <!-- Status text -->
+  <div class="status-label" id="slbl">Отключено</div>
+
+  <!-- Big toggle -->
+  <div class="toggle-wrap" id="toggle" onclick="toggle()">
+    <div class="toggle-knob">
+      <span class="knob-icon" id="icon">🔒</span>
+    </div>
   </div>
 
-  <div class="status-wrap">
-    <div class="dot" id="dot"></div>
-    <div class="status-lbl" id="slbl">Отключено</div>
+  <!-- Hint -->
+  <div class="hint" id="hint">Нажми переключатель<br>чтобы подключиться</div>
+
+</div>
+
+<!-- Bottom nav -->
+<div class="bottom-nav">
+  <div class="nav-item active">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z"/>
+      <path d="M9 21V12h6v9"/>
+    </svg>
+    <span class="nav-label" style="color:#7b68ee;font-weight:600">Главная</span>
   </div>
-
-  <button class="btn" id="btn" onclick="toggle()">Подключиться</button>
-
+  <div class="nav-item" onclick="">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="3"/>
+      <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+    </svg>
+    <span class="nav-label">Настройки</span>
+  </div>
 </div>
 
 <script>
@@ -163,16 +272,29 @@
 
   function ui(state) {
     on = state === 'on';
-    const dot  = document.getElementById('dot');
+    const tog  = document.getElementById('toggle');
     const slbl = document.getElementById('slbl');
-    const btn  = document.getElementById('btn');
+    const icon = document.getElementById('icon');
+    const hint = document.getElementById('hint');
 
-    dot.className  = 'dot'        + (state !== 'off' ? ' ' + state : '');
-    slbl.className = 'status-lbl' + (state !== 'off' ? ' ' + state : '');
-    slbl.textContent = state === 'on' ? 'Подключено' : state === 'busy' ? 'Подождите...' : 'Отключено';
-    btn.className  = 'btn' + (on ? ' on' : '');
-    btn.textContent = on ? 'Отключиться' : 'Подключиться';
-    btn.disabled = state === 'busy';
+    tog.className = 'toggle-wrap' + (on ? ' on' : state === 'busy' ? ' busy' : '');
+
+    if (state === 'on') {
+      slbl.textContent = 'Подключено';
+      slbl.className = 'status-label on';
+      icon.textContent = '🔓';
+      hint.textContent = 'VPN активен. Нажми для отключения.';
+    } else if (state === 'busy') {
+      slbl.textContent = 'Подождите...';
+      slbl.className = 'status-label busy';
+      icon.textContent = '⏳';
+      hint.textContent = '';
+    } else {
+      slbl.textContent = 'Отключено';
+      slbl.className = 'status-label';
+      icon.textContent = '🔒';
+      hint.textContent = 'Нажми переключатель\nчтобы подключиться';
+    }
   }
 
   async function toggle() {
@@ -186,7 +308,7 @@
       } else {
         const r = await window.api.connect();
         ui(r.ok ? 'on' : 'off');
-        if (!r.ok) document.getElementById('slbl').textContent = 'Ошибка';
+        if (!r.ok) document.getElementById('slbl').textContent = 'Ошибка подключения';
       }
     } catch (_) { ui('off'); }
     busy = false;
