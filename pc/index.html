@@ -19,15 +19,31 @@
     overflow: hidden;
   }
 
-  /* ── Drag / close ── */
+  /* ── Titlebar ── */
   .titlebar {
-    height: 28px;
+    height: 32px;
     display: flex;
     align-items: center;
-    justify-content: flex-end;
     padding: 0 14px;
     flex-shrink: 0;
+    gap: 8px;
   }
+
+  /* Status dot — left side */
+  .conn-dot {
+    width: 11px; height: 11px;
+    border-radius: 50%;
+    background: #ff3b30;
+    flex-shrink: 0;
+    transition: background .4s;
+    box-shadow: 0 0 0 2px rgba(255,59,48,.2);
+  }
+  .conn-dot.on   { background: #34c759; box-shadow: 0 0 0 2px rgba(52,199,89,.2); }
+  .conn-dot.busy { background: #ffd60a; box-shadow: 0 0 0 2px rgba(255,214,10,.2); }
+
+  .titlebar-spacer { flex: 1; }
+
+  /* Close button — right side */
   .close-btn {
     width: 13px; height: 13px;
     border-radius: 50%;
@@ -35,8 +51,9 @@
     border: none; cursor: pointer;
     -webkit-app-region: no-drag;
     transition: filter .15s;
+    flex-shrink: 0;
   }
-  .close-btn:hover { filter: brightness(1.2); }
+  .close-btn:hover { filter: brightness(1.15); }
 
   /* ── Main layout ── */
   .page {
@@ -44,8 +61,7 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 0 28px 20px;
-    gap: 0;
+    padding: 0 28px 16px;
   }
 
   /* ── App name ── */
@@ -53,47 +69,41 @@
     font-size: 26px;
     font-weight: 700;
     letter-spacing: -0.3px;
-    margin-bottom: 16px;
+    margin-bottom: 14px;
     color: #1c1c1e;
   }
-  .app-title span {
-    color: #7b68ee;
-  }
+  .app-title span { color: #7b68ee; }
 
   /* ── Mascot circle ── */
   .mascot-wrap {
-    width: 220px;
-    height: 220px;
+    width: 210px; height: 210px;
     border-radius: 50%;
     background: #e4e0ff;
     display: flex;
     align-items: flex-end;
     justify-content: center;
     overflow: hidden;
-    margin-bottom: 24px;
+    margin-bottom: 22px;
     flex-shrink: 0;
     position: relative;
   }
-
-  /* ── SVG bear ── */
-  .bear { width: 190px; height: 200px; }
+  .bear { width: 185px; height: 195px; }
 
   /* ── Status label ── */
   .status-label {
     font-size: 15px;
     font-weight: 600;
     letter-spacing: 0.2px;
-    margin-bottom: 16px;
+    margin-bottom: 6px;
     transition: color .3s;
     color: #8e8e93;
   }
-  .status-label.on  { color: #7b68ee; }
+  .status-label.on   { color: #34c759; }
   .status-label.busy { color: #ffd60a; }
 
   /* ── Big iOS toggle ── */
   .toggle-wrap {
-    width: 180px;
-    height: 86px;
+    width: 180px; height: 86px;
     background: #e0daf8;
     border-radius: 43px;
     padding: 8px;
@@ -102,46 +112,40 @@
     position: relative;
     transition: background .4s;
     box-shadow: inset 0 2px 8px rgba(0,0,0,.08), 0 4px 16px rgba(123,104,238,.2);
-    margin-bottom: 20px;
+    margin-bottom: 14px;
+    margin-top: 10px;
     flex-shrink: 0;
   }
   .toggle-wrap.on {
     background: #7b68ee;
     box-shadow: inset 0 2px 8px rgba(0,0,0,.1), 0 6px 24px rgba(123,104,238,.45);
   }
-  .toggle-wrap.busy {
-    cursor: default;
-    opacity: 0.7;
-  }
+  .toggle-wrap.busy { cursor: default; opacity: 0.7; }
+
   .toggle-knob {
-    width: 70px;
-    height: 70px;
+    width: 70px; height: 70px;
     border-radius: 50%;
     background: white;
     box-shadow: 0 3px 12px rgba(0,0,0,.18);
     position: absolute;
-    top: 8px;
-    left: 8px;
+    top: 8px; left: 8px;
     transition: left .35s cubic-bezier(.34,1.4,.64,1);
     display: flex;
     align-items: center;
     justify-content: center;
   }
-  .toggle-wrap.on .toggle-knob {
-    left: calc(100% - 78px);
-  }
-  .knob-icon {
-    font-size: 28px;
-    transition: opacity .2s;
-  }
+  .toggle-wrap.on .toggle-knob { left: calc(100% - 78px); }
+  .knob-icon { font-size: 28px; transition: opacity .2s; }
 
-  /* ── Hint text ── */
+  /* ── Hint / error text ── */
   .hint {
     font-size: 13px;
     color: #8e8e93;
     text-align: center;
-    line-height: 1.5;
+    line-height: 1.55;
+    min-height: 36px;
   }
+  .hint.error { color: #ff3b30; }
 
   /* ── Bottom nav ── */
   .bottom-nav {
@@ -156,14 +160,10 @@
     -webkit-app-region: no-drag;
   }
   .nav-item {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 3px;
-    cursor: pointer;
-    padding: 8px 24px;
-    border-radius: 12px;
-    transition: background .15s;
+    display: flex; flex-direction: column;
+    align-items: center; gap: 3px;
+    cursor: pointer; padding: 8px 24px;
+    border-radius: 12px; transition: background .15s;
   }
   .nav-item:hover { background: rgba(0,0,0,.05); }
   .nav-item.active .nav-label { color: #7b68ee; font-weight: 600; }
@@ -176,6 +176,8 @@
 <body>
 
 <div class="titlebar">
+  <div class="conn-dot" id="connDot"></div>
+  <div class="titlebar-spacer"></div>
   <button class="close-btn" onclick="window.api.quit()"></button>
 </div>
 
@@ -183,7 +185,7 @@
 
   <div class="app-title">prox<span>VPN</span></div>
 
-  <!-- Bear mascot in lavender circle -->
+  <!-- Bear mascot -->
   <div class="mascot-wrap">
     <svg class="bear" viewBox="0 0 190 200" xmlns="http://www.w3.org/2000/svg">
       <!-- Body / hoodie -->
@@ -227,7 +229,7 @@
       <ellipse cx="65" cy="126" rx="10" ry="6" fill="#e8824a" opacity="0.35"/>
       <ellipse cx="125" cy="126" rx="10" ry="6" fill="#e8824a" opacity="0.35"/>
 
-      <!-- Folded arms hint -->
+      <!-- Folded arms -->
       <ellipse cx="60" cy="178" rx="28" ry="16" fill="#6b5cd6"/>
       <ellipse cx="130" cy="178" rx="28" ry="16" fill="#6b5cd6"/>
     </svg>
@@ -243,7 +245,7 @@
     </div>
   </div>
 
-  <!-- Hint -->
+  <!-- Hint / progress / error -->
   <div class="hint" id="hint">Нажми переключатель<br>чтобы подключиться</div>
 
 </div>
@@ -268,7 +270,7 @@
 
 <script>
   let busy = false;
-  let on = false;
+  let on   = false;
 
   function ui(state, msg) {
     on = state === 'on';
@@ -276,29 +278,38 @@
     const slbl = document.getElementById('slbl');
     const icon = document.getElementById('icon');
     const hint = document.getElementById('hint');
+    const dot  = document.getElementById('connDot');
 
-    tog.className = 'toggle-wrap' + (on ? ' on' : state === 'busy' ? ' busy' : '');
+    tog.className  = 'toggle-wrap' + (on ? ' on' : state === 'busy' ? ' busy' : '');
+    dot.className  = 'conn-dot' + (on ? ' on' : state === 'busy' ? ' busy' : '');
+    hint.className = 'hint' + (state === 'error' ? ' error' : '');
 
     if (state === 'on') {
       slbl.textContent = 'Подключено';
-      slbl.className = 'status-label on';
+      slbl.className   = 'status-label on';
       icon.textContent = '🔓';
       hint.textContent = 'VPN активен. Нажми для отключения.';
     } else if (state === 'busy') {
       slbl.textContent = 'Подождите...';
-      slbl.className = 'status-label busy';
+      slbl.className   = 'status-label busy';
       icon.textContent = '⏳';
       hint.textContent = msg || '';
+    } else if (state === 'error') {
+      slbl.textContent = 'Ошибка';
+      slbl.className   = 'status-label';
+      icon.textContent = '🔒';
+      hint.textContent = msg || 'Не удалось подключиться';
     } else {
       slbl.textContent = 'Отключено';
-      slbl.className = 'status-label';
+      slbl.className   = 'status-label';
       icon.textContent = '🔒';
       hint.textContent = 'Нажми переключатель\nчтобы подключиться';
     }
   }
 
+  // Live progress messages during connection
   window.api.onStatus((msg) => {
-    document.getElementById('hint').textContent = msg;
+    if (busy) document.getElementById('hint').textContent = msg;
   });
 
   async function toggle() {
@@ -311,8 +322,12 @@
         ui('off');
       } else {
         const r = await window.api.connect();
-        ui(r.ok ? 'on' : 'off');
-        if (!r.ok) document.getElementById('slbl').textContent = 'Ошибка подключения';
+        if (r.ok) {
+          ui('on');
+        } else {
+          ui('error', r.error ? r.error.slice(0, 120) : 'Не удалось подключиться');
+          setTimeout(() => ui('off'), 4000);
+        }
       }
     } catch (_) { ui('off'); }
     busy = false;
