@@ -13,35 +13,34 @@ export default {
     const url = new URL(request.url);
     const host = request.headers.get('host') || url.host;
 
+    // DNS-over-HTTPS — GET and POST, outside method guard (iOS uses POST)
+    if (url.pathname === '/dns-query') {
+      const dohTarget = new URL('https://dns.google/dns-query');
+      url.searchParams.forEach((v, k) => dohTarget.searchParams.set(k, v));
+      const upstream = await fetch(dohTarget.toString(), {
+        method: request.method,
+        headers: {
+          'accept': request.headers.get('accept') || 'application/dns-message',
+          ...(request.headers.get('content-type')
+            ? { 'content-type': request.headers.get('content-type') } : {}),
+        },
+        body: request.body || undefined,
+      });
+      return new Response(upstream.body, {
+        status: upstream.status,
+        headers: {
+          'content-type': upstream.headers.get('content-type') || 'application/dns-message',
+          'cache-control': 'max-age=300',
+          'access-control-allow-origin': '*',
+        },
+      });
+    }
+
     // ── Management routes (public, no auth) ──────────────────────────────────
     if (request.method === 'GET' || request.method === 'HEAD') {
       if (url.pathname === '/pac') {
         return new Response(makePAC(host), {
           headers: { 'content-type': 'application/x-ns-proxy-autoconfig' },
-        });
-      }
-
-      // DNS-over-HTTPS — proxies to Google DNS, bypasses ISP DNS injection
-      // Works on Wi-Fi AND cellular, installs WITHOUT device supervision
-      if (url.pathname === '/dns-query') {
-        const dohTarget = new URL('https://dns.google/dns-query');
-        url.searchParams.forEach((v, k) => dohTarget.searchParams.set(k, v));
-        const upstream = await fetch(dohTarget.toString(), {
-          method: request.method,
-          headers: {
-            'accept': request.headers.get('accept') || 'application/dns-message',
-            ...(request.method === 'POST' && request.headers.get('content-type')
-              ? { 'content-type': request.headers.get('content-type') } : {}),
-          },
-          body: request.method === 'POST' ? request.body : undefined,
-        });
-        return new Response(upstream.body, {
-          status: upstream.status,
-          headers: {
-            'content-type': upstream.headers.get('content-type') || 'application/dns-message',
-            'cache-control': 'max-age=300',
-            'access-control-allow-origin': '*',
-          },
         });
       }
 
