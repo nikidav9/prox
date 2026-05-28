@@ -1,13 +1,11 @@
 {
   "name": "prox",
   "version": "1.0.0",
-  "description": "VPN через Cloudflare",
-  "main": "main.js",
+  "description": "VPN through Cloudflare",
   "scripts": {
-    "start": "electron ."
+    "start": "node proxy.js"
   },
   "dependencies": {
-    "electron": "^28.0.0",
     "ws": "^8.16.0"
   }
 }
