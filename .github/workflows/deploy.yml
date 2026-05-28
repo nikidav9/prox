@@ -4,20 +4,70 @@ on:
   push:
     branches: ["claude/inspiring-clarke-VpxZc", "main"]
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/${{ github.repository_owner }}/prox
+  RAILWAY_TOKEN: f77cfa91-7494-4cb7-af9c-960ebf4d263c
+  RAILWAY_SERVICE_ID: 783e8319-c595-46ca-8190-e93fa19a11be
+  RAILWAY_ENV_ID: f953ef16-acd6-4f50-8b42-fbd5cee0b787
+  RAILWAY_PROJECT_ID: 1c04a527-a115-4b95-9f35-6d9b4b3b944e
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      # ── Build & push Docker image to ghcr.io ──────────────────────────────
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
         with:
-          node-version: "22"
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
 
-      - name: Deploy
-        env:
-          RAILWAY_TOKEN: f77cfa91-7494-4cb7-af9c-960ebf4d263c
-        run: railway up --detach --service 783e8319-c595-46ca-8190-e93fa19a11be
+      # ── Make ghcr.io package public so Railway can pull without auth ───────
+      - name: Make package public
+        run: |
+          curl -s -X PATCH \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/user/packages/container/prox" \
+            -d '{"visibility":"public"}' | jq -r '.visibility // .message'
+
+      # ── Tell Railway to use this image ─────────────────────────────────────
+      - name: Update Railway service image
+        run: |
+          IMAGE_TAG="${{ env.IMAGE }}:${{ github.sha }}"
+          curl -s -X POST https://backboard.railway.app/graphql/v2 \
+            -H "Authorization: Bearer $RAILWAY_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"query\":\"mutation { serviceInstanceUpdate(serviceId: \\\"$RAILWAY_SERVICE_ID\\\", environmentId: \\\"$RAILWAY_ENV_ID\\\", input: { source: { image: \\\"$IMAGE_TAG\\\" } }) }\"}" \
+            | jq .
+
+      - name: Trigger Railway redeployment
+        run: |
+          curl -s -X POST https://backboard.railway.app/graphql/v2 \
+            -H "Authorization: Bearer $RAILWAY_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"query\":\"mutation { serviceInstanceRedeploy(serviceId: \\\"$RAILWAY_SERVICE_ID\\\", environmentId: \\\"$RAILWAY_ENV_ID\\\") }\"}" \
+            | jq .
+
+      - name: Done
+        run: |
+          echo "Deployed image ${{ env.IMAGE }}:${{ github.sha }}"
+          echo "Railway URL: https://prox-production-e4e0.up.railway.app"
