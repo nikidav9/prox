@@ -21,10 +21,15 @@ export default {
         });
       }
       if (url.pathname === '/profile.mobileconfig') {
-        return new Response(makeMobileconfig(host, PROXY_USER, PROXY_PASS), {
+        const body = makeMobileconfig(host, PROXY_USER, PROXY_PASS);
+        const bytes = new TextEncoder().encode(body);
+        return new Response(bytes.buffer, {
+          status: 200,
           headers: {
-            'content-type': 'application/x-apple-aspen-config',
-            'content-disposition': 'attachment; filename="prox.mobileconfig"',
+            'Content-Type': 'application/x-apple-aspen-config',
+            'Content-Disposition': 'attachment; filename="prox.mobileconfig"',
+            'X-Content-Type-Options': 'nosniff',
+            'Cache-Control': 'no-store',
           },
         });
       }
