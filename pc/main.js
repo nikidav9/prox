@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } = require('electron');
 const http = require('http');
 const { exec } = require('child_process');
 const path = require('path');
@@ -8,19 +8,37 @@ const path = require('path');
 const PROXY_PORT = 10809;
 const WS_ENDPOINT = 'wss://prox.nikidav9.workers.dev/tunnel';
 const TUNNEL_TOKEN = 'f03e5c9e-16ae-484e-a405-c78695b1142a';
+const REG = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
+const PS_REFRESH = [
+  'powershell -NoProfile -NonInteractive -Command',
+  '"$t=Add-Type -MemberDefinition',
+  `'[DllImport(\\"wininet.dll\\")]public static extern bool InternetSetOption(IntPtr h,int o,IntPtr b,int l);'`,
+  '-Name W -Namespace W -PassThru;',
+  '$t::InternetSetOption(0,39,0,0);',
+  '$t::InternetSetOption(0,37,0,0)"',
+].join(' ');
 
 let win = null;
+let tray = null;
 let proxyServer = null;
 let connected = false;
 
-// ── Proxy server ─────────────────────────────────────────────────────────────
+// ── Single instance ──────────────────────────────────────────────────────────
+
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) { app.quit(); }
+else {
+  app.on('second-instance', () => {
+    if (win) { win.show(); win.focus(); }
+  });
+}
+
+// ── Proxy ────────────────────────────────────────────────────────────────────
 
 function createProxyServer() {
   const WebSocket = require('ws');
-
   const server = http.createServer((_req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('prox');
+    res.writeHead(200); res.end('prox');
   });
 
   server.on('connect', (req, socket, head) => {
@@ -29,19 +47,16 @@ function createProxyServer() {
     const port = parseInt(req.url.slice(colonIdx + 1) || '443', 10);
 
     const ws = new WebSocket(`${WS_ENDPOINT}?token=${TUNNEL_TOKEN}`);
+    let ready = false;
 
-    let tunnelReady = false;
-
-    ws.on('open', () => {
-      ws.send(JSON.stringify({ host, port }));
-    });
+    ws.on('open', () => ws.send(JSON.stringify({ host, port })));
 
     ws.on('message', (data) => {
-      if (!tunnelReady) {
+      if (!ready) {
         try {
           const msg = JSON.parse(data.toString());
           if (msg.ok) {
-            tunnelReady = true;
+            ready = true;
             socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
             if (head && head.length) ws.send(head);
             socket.on('data', (chunk) => {
@@ -49,32 +64,18 @@ function createProxyServer() {
             });
           } else {
             socket.write('HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n');
-            socket.destroy();
-            ws.close();
+            socket.destroy(); ws.close();
           }
-        } catch (_) {
-          socket.write('HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n');
-          socket.destroy();
-          ws.close();
-        }
+        } catch (_) { socket.destroy(); ws.close(); }
         return;
       }
       try { socket.write(data); } catch (_) {}
     });
 
-    ws.on('error', () => {
-      if (!tunnelReady) {
-        try {
-          socket.write('HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n');
-        } catch (_) {}
-      }
-      try { socket.destroy(); } catch (_) {}
-    });
-
-    ws.on('close', () => { try { socket.destroy(); } catch (_) {} });
-
+    ws.on('error', () => { try { socket.destroy(); } catch (_) {} });
+    ws.on('close',  () => { try { socket.destroy(); } catch (_) {} });
     socket.on('error', () => { try { ws.close(); } catch (_) {} });
-    socket.on('end', () => { try { ws.close(); } catch (_) {} });
+    socket.on('end',   () => { try { ws.close(); } catch (_) {} });
   });
 
   return server;
@@ -82,15 +83,17 @@ function createProxyServer() {
 
 // ── Windows proxy settings ────────────────────────────────────────────────────
 
-const REG = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
-
-function setWindowsProxy(enable) {
+function setProxy(enable, cb) {
   if (enable) {
     exec(`reg add "${REG}" /v ProxyEnable /t REG_DWORD /d 1 /f`);
     exec(`reg add "${REG}" /v ProxyServer /t REG_SZ /d "127.0.0.1:${PROXY_PORT}" /f`);
-    exec(`reg add "${REG}" /v ProxyOverride /t REG_SZ /d "<local>" /f`);
+    exec(`reg add "${REG}" /v ProxyOverride /t REG_SZ /d "<local>" /f`, () => {
+      exec(PS_REFRESH, () => cb && cb());
+    });
   } else {
-    exec(`reg add "${REG}" /v ProxyEnable /t REG_DWORD /d 0 /f`);
+    exec(`reg add "${REG}" /v ProxyEnable /t REG_DWORD /d 0 /f`, () => {
+      exec(PS_REFRESH, () => cb && cb());
+    });
   }
 }
 
@@ -106,8 +109,9 @@ ipcMain.handle('connect', async () => {
         proxyServer.once('error', reject);
       });
     }
-    setWindowsProxy(true);
+    await new Promise(r => setProxy(true, r));
     connected = true;
+    updateTray();
     return { ok: true };
   } catch (e) {
     if (proxyServer) { proxyServer.close(); proxyServer = null; }
@@ -116,18 +120,60 @@ ipcMain.handle('connect', async () => {
 });
 
 ipcMain.handle('disconnect', async () => {
-  setWindowsProxy(false);
+  await new Promise(r => setProxy(false, r));
   if (proxyServer) {
     await new Promise(r => proxyServer.close(r));
     proxyServer = null;
   }
   connected = false;
+  updateTray();
   return { ok: true };
 });
 
 ipcMain.handle('status', () => ({ connected }));
 
-ipcMain.handle('close', () => { app.quit(); });
+ipcMain.handle('quit', () => {
+  setProxy(false, () => app.quit());
+});
+
+ipcMain.handle('hide', () => {
+  if (win) win.hide();
+});
+
+// ── Tray ─────────────────────────────────────────────────────────────────────
+
+function makeTrayIcon(on) {
+  // Simple 16x16 colored dot icon as data URL
+  const color = on ? '#30d158' : '#636366';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16">
+    <circle cx="8" cy="8" r="7" fill="${color}"/>
+  </svg>`;
+  return nativeImage.createFromDataURL(
+    'data:image/svg+xml;base64,' + Buffer.from(svg).toString('base64')
+  );
+}
+
+function updateTray() {
+  if (!tray) return;
+  tray.setImage(makeTrayIcon(connected));
+  tray.setToolTip(connected ? 'prox — подключено' : 'prox — отключено');
+}
+
+function createTray() {
+  tray = new Tray(makeTrayIcon(false));
+  tray.setToolTip('prox — отключено');
+  tray.on('click', () => {
+    if (win) { win.isVisible() ? win.hide() : win.show(); }
+  });
+  const menu = Menu.buildFromTemplate([
+    { label: 'Открыть', click: () => win && win.show() },
+    { type: 'separator' },
+    { label: 'Выйти', click: () => {
+      setProxy(false, () => app.quit());
+    }},
+  ]);
+  tray.setContextMenu(menu);
+}
 
 // ── Window ────────────────────────────────────────────────────────────────────
 
@@ -144,12 +190,21 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
-  win.loadFile('index.html');
+
+  win.loadFile(path.join(__dirname, 'index.html'));
+
+  win.on('close', (e) => {
+    e.preventDefault();
+    win.hide();
+  });
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  createTray();
+  createWindow();
+});
 
-app.on('window-all-closed', () => {
-  setWindowsProxy(false);
-  app.quit();
+app.on('before-quit', () => {
+  if (win) win.removeAllListeners('close');
+  setProxy(false);
 });
