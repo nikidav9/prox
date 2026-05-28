@@ -7,29 +7,39 @@ echo.
 where node > nul 2>&1
 if errorlevel 1 (
     echo ERROR: Node.js is not installed.
-    echo.
-    echo Download from: https://nodejs.org
-    echo Choose LTS version, install it, then run start.bat again.
+    echo Download from: https://nodejs.org  ^(choose LTS^)
+    echo Install it, then run start.bat again.
     echo.
     pause
     exit /b 1
 )
 
-if not exist node_modules\electron (
-    echo First run - installing components, please wait ~1 minute...
+:install
+if not exist node_modules\electron\dist\electron.exe (
+    echo Installing components, please wait ~2 minutes...
     echo.
+    if exist node_modules\electron rmdir /s /q node_modules\electron
     npm install
     if errorlevel 1 (
         echo.
-        echo ERROR: install failed. Check your internet connection and try again.
+        echo ERROR: install failed. Check internet and try again.
         pause
         exit /b 1
     )
     echo.
 )
 
-echo Launching app...
-npx electron . 2>&1
+if not exist node_modules\electron\dist\electron.exe (
+    echo Electron binary missing, retrying download...
+    rmdir /s /q node_modules\electron
+    npm install electron --save
+    echo.
+)
+
+echo Launching...
+node_modules\electron\dist\electron.exe .
 echo.
-echo App exited. If no window appeared, there is an error above.
-pause
+if errorlevel 1 (
+    echo Something went wrong. See error above.
+    pause
+)
