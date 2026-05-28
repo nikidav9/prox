@@ -1,28 +1,27 @@
 @echo off
-chcp 65001 > nul
 cd /d "%~dp0"
 
-echo prox — запуск...
+echo prox - starting...
 echo.
 
 where node > nul 2>&1
 if errorlevel 1 (
-    echo ОШИБКА: Node.js не установлен.
+    echo ERROR: Node.js is not installed.
     echo.
-    echo Скачай с сайта: https://nodejs.org
-    echo Выбери LTS версию, установи, затем запусти start.bat снова.
+    echo Download from: https://nodejs.org
+    echo Choose LTS version, install it, then run start.bat again.
     echo.
     pause
     exit /b 1
 )
 
 if not exist node_modules\electron (
-    echo Первый запуск — установка компонентов ~1 минута...
+    echo First run - installing components, please wait ~1 minute...
     echo.
     npm install
     if errorlevel 1 (
         echo.
-        echo ОШИБКА при установке. Проверь интернет и попробуй снова.
+        echo ERROR: install failed. Check your internet connection and try again.
         pause
         exit /b 1
     )
