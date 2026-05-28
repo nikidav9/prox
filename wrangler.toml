@@ -1,0 +1,9 @@
+name = "prox"
+main = "worker.js"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+PROXY_USER = "user"
+# Set PROXY_PASS via dashboard: Workers → prox → Settings → Variables
+# (never commit real passwords to git)
