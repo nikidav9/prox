@@ -8,13 +8,23 @@ const WS_ENDPOINT = 'wss://prox.nikidav9.workers.dev/tunnel';
 const TOKEN = 'f03e5c9e-16ae-484e-a405-c78695b1142a';
 const REG = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
 
-function setProxy(enable) {
+// Notify all running apps (Chrome/Edge) to reload proxy settings immediately
+const PS_REFRESH = `powershell -NoProfile -NonInteractive -Command `
+  + `"$t=Add-Type -MemberDefinition '[DllImport(\\"wininet.dll\\")]`
+  + `public static extern bool InternetSetOption(IntPtr h,int o,IntPtr b,int l);'`
+  + ` -Name W -Namespace W -PassThru;$t::InternetSetOption(0,39,0,0);$t::InternetSetOption(0,37,0,0)"`;
+
+function setProxy(enable, cb) {
   if (enable) {
     exec(`reg add "${REG}" /v ProxyEnable /t REG_DWORD /d 1 /f`);
     exec(`reg add "${REG}" /v ProxyServer /t REG_SZ /d "127.0.0.1:${PROXY_PORT}" /f`);
-    exec(`reg add "${REG}" /v ProxyOverride /t REG_SZ /d "<local>" /f`);
+    exec(`reg add "${REG}" /v ProxyOverride /t REG_SZ /d "<local>" /f`, () => {
+      exec(PS_REFRESH, cb);
+    });
   } else {
-    exec(`reg add "${REG}" /v ProxyEnable /t REG_DWORD /d 0 /f`);
+    exec(`reg add "${REG}" /v ProxyEnable /t REG_DWORD /d 0 /f`, () => {
+      exec(PS_REFRESH, cb);
+    });
   }
 }
 
@@ -64,27 +74,31 @@ server.on('connect', (req, socket, head) => {
 });
 
 server.listen(PROXY_PORT, '127.0.0.1', () => {
-  setProxy(true);
-  console.log('');
-  console.log('  +---------------------------+');
-  console.log('  |   prox  -  CONNECTED      |');
-  console.log('  |                           |');
-  console.log('  |   Server : Cloudflare     |');
-  console.log('  |   Proxy  : 127.0.0.1:'+ PROXY_PORT +'  |');
-  console.log('  |                           |');
-  console.log('  |   Press Ctrl+C to stop    |');
-  console.log('  +---------------------------+');
-  console.log('');
+  setProxy(true, () => {
+    console.log('');
+    console.log('  +------------------------------------+');
+    console.log('  |   prox  -  CONNECTED               |');
+    console.log('  |                                    |');
+    console.log('  |   Server  : Cloudflare             |');
+    console.log('  |   Proxy   : 127.0.0.1:' + PROXY_PORT + '          |');
+    console.log('  |                                    |');
+    console.log('  |   RESTART YOUR BROWSER NOW         |');
+    console.log('  |                                    |');
+    console.log('  |   Press Ctrl+C to disconnect       |');
+    console.log('  +------------------------------------+');
+    console.log('');
+  });
 });
 
 process.on('SIGINT', () => {
   console.log('  Disconnecting...');
-  setProxy(false);
-  server.close(() => process.exit(0));
+  setProxy(false, () => {
+    console.log('  Done. Proxy disabled.');
+    server.close(() => process.exit(0));
+  });
 });
 
 process.on('uncaughtException', (e) => {
   console.error('  Error:', e.message);
-  setProxy(false);
-  process.exit(1);
+  setProxy(false, () => process.exit(1));
 });
