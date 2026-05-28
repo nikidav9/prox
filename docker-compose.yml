@@ -1,0 +1,18 @@
+services:
+  prox:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:8080"
+      - "${MGMT_PORT:-8081}:8081"
+    environment:
+      - PORT=8080
+      - MGMT_PORT=8081
+      - SERVER_HOST=${SERVER_HOST:-localhost}
+      - PROXY_USER=${PROXY_USER:-user}
+      - PROXY_PASS=${PROXY_PASS:-}
+    volumes:
+      - prox_data:/app/data
+
+volumes:
+  prox_data:
