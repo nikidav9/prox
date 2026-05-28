@@ -60,6 +60,15 @@ jobs:
             -d "{\"query\":\"mutation { serviceInstanceUpdate(serviceId: \\\"$RAILWAY_SERVICE_ID\\\", environmentId: \\\"$RAILWAY_ENV_ID\\\", input: { source: { image: \\\"$IMAGE_TAG\\\" } }) }\"}" \
             | jq .
 
+      # ── Set Railway environment variables ──────────────────────────────────────
+      - name: Set Railway env vars
+        run: |
+          curl -s -X POST https://backboard.railway.app/graphql/v2 \
+            -H "Authorization: Bearer $RAILWAY_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"query\":\"mutation { variableCollectionUpsert(input: { projectId: \\\"$RAILWAY_PROJECT_ID\\\", environmentId: \\\"$RAILWAY_ENV_ID\\\", serviceId: \\\"$RAILWAY_SERVICE_ID\\\", variables: { SERVER_HOST: \\\"prox-production-e4e0.up.railway.app\\\", EXTERNAL_PORT: \\\"443\\\" } }) }\"}" \
+            | jq .
+
       - name: Trigger Railway redeployment
         run: |
           curl -s -X POST https://backboard.railway.app/graphql/v2 \

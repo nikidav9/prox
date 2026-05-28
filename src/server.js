@@ -20,6 +20,8 @@ const PROXY_PASS = process.env.PROXY_PASS || (() => {
 const SERVER_HOST = process.env.SERVER_HOST || 'localhost';
 // On Railway the external port is always 443 (HTTPS via their edge)
 const EXTERNAL_PORT = process.env.EXTERNAL_PORT || PORT;
+const XRAY_UUID = process.env.XRAY_UUID || '';
+const XRAY_PORT = 8388;
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -134,7 +136,32 @@ server.on('connect', (req, socket, head) => {
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[prox] listening on :${PORT}`);
   console.log(`[prox] host=${SERVER_HOST} user=${PROXY_USER} pass=${PROXY_PASS}`);
+  if (XRAY_UUID) console.log(`[prox] VLESS UUID=${XRAY_UUID}`);
   console.log(`[prox] UI → http://${SERVER_HOST}:${EXTERNAL_PORT}/`);
+});
+
+// WebSocket upgrade — proxy /vless path to local Xray
+server.on('upgrade', (req, socket, head) => {
+  if (req.url !== '/vless' || !XRAY_UUID) {
+    socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+
+  const xray = net.connect(XRAY_PORT, '127.0.0.1', () => {
+    let raw = `GET /vless HTTP/1.1\r\n`;
+    for (let i = 0; i < req.rawHeaders.length; i += 2) {
+      raw += `${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}\r\n`;
+    }
+    raw += '\r\n';
+    xray.write(raw);
+    if (head && head.length) xray.write(head);
+    xray.pipe(socket);
+    socket.pipe(xray);
+  });
+
+  xray.on('error', () => { try { socket.destroy(); } catch (_) {} });
+  socket.on('error', () => { try { xray.destroy(); } catch (_) {} });
 });
 
 // ── Profile generators ────────────────────────────────────────────────────────
@@ -214,7 +241,11 @@ function FindProxyForURL(url, host) {
 
 function generateUI() {
   const scheme = EXTERNAL_PORT == 443 ? 'https' : 'http';
-  const baseUrl = `${scheme}://${SERVER_HOST}${EXTERNAL_PORT == 443 ? '' : ':' + EXTERNAL_PORT}`;
+  const host443 = EXTERNAL_PORT == 443;
+  const baseUrl = `${scheme}://${SERVER_HOST}${host443 ? '' : ':' + EXTERNAL_PORT}`;
+  const vlessUrl = XRAY_UUID
+    ? `vless://${XRAY_UUID}@${SERVER_HOST}:443?encryption=none&security=tls&type=ws&path=%2Fvless&host=${SERVER_HOST}#prox`
+    : '';
 
   return `<!DOCTYPE html>
 <html lang="ru">
@@ -223,52 +254,61 @@ function generateUI() {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>prox</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, system-ui, sans-serif; background: #f2f2f7; color: #1c1c1e; }
-  .wrap { max-width: 480px; margin: 0 auto; padding: 32px 16px; }
-  h1 { font-size: 28px; font-weight: 700; margin-bottom: 24px; }
-  .card { background: white; border-radius: 16px; padding: 20px; margin-bottom: 16px; }
-  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .5px; color: #8e8e93; margin-bottom: 12px; }
-  .row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0;
-         border-bottom: 1px solid #f2f2f7; }
-  .row:last-child { border-bottom: none; }
-  .label { color: #8e8e93; font-size: 15px; }
-  .val { font-family: monospace; font-size: 15px; font-weight: 500; }
-  .btn { display: block; width: 100%; padding: 16px; background: #007AFF; color: white;
-         text-decoration: none; border-radius: 12px; text-align: center;
-         font-size: 17px; font-weight: 600; margin-bottom: 16px; }
-  .steps { list-style: none; counter-reset: s; }
-  .steps li { counter-increment: s; padding: 8px 0 8px 36px; position: relative;
-               border-bottom: 1px solid #f2f2f7; font-size: 15px; }
-  .steps li:last-child { border-bottom: none; }
-  .steps li::before { content: counter(s); position: absolute; left: 0; top: 8px;
-                       background: #007AFF; color: white; width: 24px; height: 24px;
-                       border-radius: 12px; display: flex; align-items: center;
-                       justify-content: center; font-size: 13px; font-weight: 700; }
-  .note { font-size: 13px; color: #8e8e93; margin-top: 8px; }
-  code { font-family: monospace; background: #f2f2f7; padding: 2px 6px; border-radius: 4px; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,system-ui,sans-serif;background:#f2f2f7;color:#1c1c1e}
+  .w{max-width:480px;margin:0 auto;padding:32px 16px}
+  h1{font-size:28px;font-weight:700;margin-bottom:8px}
+  .sub{font-size:15px;color:#8e8e93;margin-bottom:24px}
+  .c{background:white;border-radius:16px;padding:20px;margin-bottom:16px}
+  .c h2{font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:#8e8e93;margin-bottom:12px}
+  .r{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f2f2f7}
+  .r:last-child{border-bottom:none}
+  .l{color:#8e8e93;font-size:15px}.v{font-family:monospace;font-size:14px;font-weight:500;word-break:break-all;text-align:right;max-width:65%}
+  .btn{display:block;width:100%;padding:14px;background:#34C759;color:white;border:none;
+    border-radius:12px;text-align:center;font-size:16px;font-weight:600;margin-bottom:12px;cursor:pointer}
+  .link-box{background:#f2f2f7;border-radius:10px;padding:12px;font-family:monospace;
+    font-size:11px;word-break:break-all;margin:12px 0;color:#1c1c1e;user-select:all}
+  ol{list-style:none;counter-reset:s}
+  li{counter-increment:s;padding:8px 0 8px 36px;position:relative;border-bottom:1px solid #f2f2f7;font-size:15px}
+  li:last-child{border-bottom:none}
+  li::before{content:counter(s);position:absolute;left:0;top:8px;background:#34C759;color:white;
+    width:24px;height:24px;border-radius:12px;display:flex;align-items:center;justify-content:center;
+    font-size:13px;font-weight:700}
+  .note{font-size:13px;color:#8e8e93;margin-top:8px}
+  .copied{background:#30D158!important}
 </style>
 </head>
 <body>
-<div class="wrap">
+<div class="w">
   <h1>prox</h1>
-  <div class="card">
-    <h2>Параметры</h2>
-    <div class="row"><span class="label">Прокси</span><span class="val">${SERVER_HOST}</span></div>
-    <div class="row"><span class="label">Логин</span><span class="val">${PROXY_USER}</span></div>
-    <div class="row"><span class="label">Пароль</span><span class="val">${PROXY_PASS}</span></div>
-  </div>
-  <a href="${baseUrl}/profile.mobileconfig" class="btn">Скачать iOS профиль (.mobileconfig)</a>
-  <div class="card">
-    <h2>Установка на iPhone</h2>
-    <ol class="steps">
-      <li>Открой эту страницу на iPhone в Safari</li>
-      <li>Нажми «Скачать iOS профиль» — Safari предложит установить профиль</li>
-      <li>Настройки → Общие → VPN и управление устройством</li>
-      <li>Найди профиль «prox» → Установить</li>
-      <li>Весь трафик идёт через прокси</li>
+  <p class="sub">Обход блокировок через европейский сервер</p>
+
+  ${vlessUrl ? `
+  <div class="c">
+    <h2>Подключение через V2Box</h2>
+    <ol>
+      <li>Скачай <b>V2Box</b> из App Store — бесплатно</li>
+      <li>Нажми кнопку ниже, чтобы скопировать ссылку</li>
+      <li>Открой V2Box → нажми <b>+</b> → <b>Import from clipboard</b></li>
+      <li>Появится «prox» → нажми <b>Connect</b></li>
+      <li>iOS спросит разрешение на VPN — разреши</li>
     </ol>
-    <p class="note">Без App Store. Без аккаунта разработчика.</p>
+    <div class="link-box" id="vless">${vlessUrl}</div>
+    <button class="btn" onclick="var b=document.getElementById('vless');navigator.clipboard.writeText(b.innerText).then(()=>{this.textContent='Скопировано!';this.classList.add('copied');setTimeout(()=>{this.textContent='Скопировать ссылку';this.classList.remove('copied')},2000)})">Скопировать ссылку</button>
+    <p class="note">Весь трафик идёт через сервер. Работает на Wi-Fi и мобильной сети.</p>
+  </div>` : `
+  <div class="c">
+    <h2>Сервер запускается...</h2>
+    <p style="font-size:15px;color:#8e8e93">Подожди минуту и обнови страницу</p>
+  </div>`}
+
+  <div class="c">
+    <h2>Параметры сервера</h2>
+    <div class="r"><span class="l">Адрес</span><span class="v">${SERVER_HOST}</span></div>
+    ${XRAY_UUID ? `<div class="r"><span class="l">UUID</span><span class="v">${XRAY_UUID}</span></div>` : ''}
+    <div class="r"><span class="l">Протокол</span><span class="v">VLESS+WS+TLS</span></div>
+    <div class="r"><span class="l">Путь</span><span class="v">/vless</span></div>
+    <div class="r"><span class="l">Порт</span><span class="v">443</span></div>
   </div>
 </div>
 </body>
