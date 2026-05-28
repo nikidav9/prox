@@ -1,0 +1,33 @@
+[app]
+name = "prox"
+primary_region = "ams"  # Amsterdam — ближе к России
+
+[build]
+
+[env]
+PORT = "8080"
+MGMT_PORT = "8081"
+
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+
+  [[services.ports]]
+    port = 8080
+
+[[services]]
+  internal_port = 8081
+  protocol = "tcp"
+
+  [[services.ports]]
+    port = 8081
+
+[checks]
+  [checks.alive]
+    grace_period = "5s"
+    interval = "15s"
+    method = "get"
+    path = "/"
+    port = 8081
+    timeout = "2s"
+    type = "http"
