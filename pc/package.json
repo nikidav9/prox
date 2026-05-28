@@ -5,7 +5,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win --x64"
+    "dist": "cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win --x64"
   },
   "build": {
     "appId": "com.prox.vpn",
@@ -43,6 +43,7 @@
     "ws": "^8.16.0"
   },
   "devDependencies": {
+    "cross-env": "^7.0.3",
     "electron": "^28.3.3",
     "electron-builder": "^24.13.3"
   }
