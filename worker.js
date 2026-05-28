@@ -157,13 +157,16 @@ function makeDNSMobileconfig(host) {
       <key>PayloadType</key><string>com.apple.dnsSettings.managed</string>
       <key>PayloadUUID</key><string>${payloadId}</string>
       <key>PayloadVersion</key><integer>1</integer>
-      <key>DNSProtocol</key><string>HTTPS</string>
-      <key>ServerURL</key><string>https://${host}/dns-query</string>
-      <key>ServerAddresses</key>
-      <array>
-        <string>8.8.8.8</string>
-        <string>8.8.4.4</string>
-      </array>
+      <key>DNSSettings</key>
+      <dict>
+        <key>DNSProtocol</key><string>HTTPS</string>
+        <key>ServerURL</key><string>https://${host}/dns-query</string>
+        <key>ServerAddresses</key>
+        <array>
+          <string>8.8.8.8</string>
+          <string>8.8.4.4</string>
+        </array>
+      </dict>
     </dict>
   </array>
 </dict>
