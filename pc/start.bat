@@ -28,4 +28,8 @@ if not exist node_modules\electron (
     echo.
 )
 
-npx electron .
+echo Launching app...
+npx electron . 2>&1
+echo.
+echo App exited. If no window appeared, there is an error above.
+pause
