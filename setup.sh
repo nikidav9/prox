@@ -46,10 +46,24 @@ fi
 cp -r "$(dirname "$0")"/* "$INSTALL_DIR/" 2>/dev/null || true
 
 # ── Firewall ──────────────────────────────────────────────────────────────────
-if command -v ufw &>/dev/null; then
+# Oracle Cloud: iptables блокирует трафик даже при открытых Security Rules в консоли
+if iptables -L INPUT -n 2>/dev/null | grep -q "REJECT\|DROP"; then
+  info "Oracle Cloud: открываю порты в iptables..."
+  iptables -I INPUT 1 -p tcp --dport 8080 -j ACCEPT
+  iptables -I INPUT 1 -p tcp --dport 8081 -j ACCEPT
+  # Сохраняем правила чтобы не сбросились после перезагрузки
+  if command -v netfilter-persistent &>/dev/null; then
+    netfilter-persistent save
+  else
+    apt-get install -y -q iptables-persistent netfilter-persistent 2>/dev/null && netfilter-persistent save || true
+  fi
+  info "iptables: порты 8080 и 8081 открыты"
+fi
+
+if command -v ufw &>/dev/null && ufw status | grep -q "active"; then
   ufw allow 8080/tcp comment "prox proxy" || true
   ufw allow 8081/tcp comment "prox mgmt" || true
-  info "Открыты порты 8080 и 8081 в ufw"
+  info "ufw: порты 8080 и 8081 открыты"
 fi
 
 # ── Запуск ────────────────────────────────────────────────────────────────────
