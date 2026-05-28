@@ -3,6 +3,7 @@ name: Deploy to Railway
 on:
   push:
     branches: ["claude/inspiring-clarke-VpxZc", "main"]
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
