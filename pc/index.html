@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>prox</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, system-ui, 'Segoe UI', sans-serif;
+    background: #111111;
+    color: #ffffff;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    user-select: none;
+    -webkit-app-region: drag;
+    overflow: hidden;
+  }
+
+  .titlebar {
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 0 14px;
+    flex-shrink: 0;
+  }
+
+  .close-btn {
+    width: 13px; height: 13px;
+    border-radius: 50%;
+    background: #ff5f57;
+    border: none;
+    cursor: pointer;
+    -webkit-app-region: no-drag;
+    transition: filter 0.15s;
+  }
+  .close-btn:hover { filter: brightness(1.25); }
+
+  .content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 24px 32px;
+  }
+
+  /* Logo */
+  .logo-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+  .logo {
+    width: 82px; height: 82px;
+    border-radius: 24px;
+    background: linear-gradient(145deg, #0a84ff 0%, #5e5ce6 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 44px;
+    font-weight: 800;
+    color: #fff;
+    box-shadow: 0 6px 24px rgba(10,132,255,0.35);
+  }
+  .app-name {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #fff;
+  }
+
+  /* Server card */
+  .server-card {
+    width: 100%;
+    background: #1c1c1e;
+    border-radius: 16px;
+    padding: 14px 18px;
+  }
+  .card-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #636366;
+    margin-bottom: 10px;
+  }
+  .card-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 7px 0;
+    border-bottom: 1px solid #2c2c2e;
+  }
+  .card-row:last-child { border-bottom: none; }
+  .card-label { font-size: 14px; color: #8e8e93; }
+  .card-value { font-size: 14px; font-weight: 500; color: #fff; }
+
+  /* Status */
+  .status-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .status-ring {
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: #3a3a3c;
+    transition: background 0.4s, box-shadow 0.4s;
+  }
+  .status-ring.on {
+    background: #30d158;
+    box-shadow: 0 0 0 3px rgba(48,209,88,0.2), 0 0 10px rgba(48,209,88,0.4);
+  }
+  .status-ring.busy {
+    background: #ffd60a;
+    box-shadow: 0 0 8px rgba(255,214,10,0.4);
+  }
+  .status-text {
+    font-size: 14px;
+    color: #636366;
+    transition: color 0.3s;
+  }
+  .status-text.on { color: #30d158; }
+  .status-text.busy { color: #ffd60a; }
+
+  /* Button */
+  .btn {
+    width: 100%;
+    padding: 15px;
+    border: none;
+    border-radius: 14px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.25s, transform 0.1s, filter 0.15s;
+    background: #0a84ff;
+    color: #fff;
+    -webkit-app-region: no-drag;
+  }
+  .btn:hover { filter: brightness(1.1); }
+  .btn:active { transform: scale(0.97); }
+  .btn.on { background: #ff453a; }
+  .btn:disabled { opacity: 0.45; cursor: default; transform: none; filter: none; }
+</style>
+</head>
+<body>
+
+<div class="titlebar">
+  <button class="close-btn" onclick="api.close()"></button>
+</div>
+
+<div class="content">
+
+  <div class="logo-wrap">
+    <div class="logo">P</div>
+    <div class="app-name">prox</div>
+  </div>
+
+  <div class="server-card">
+    <div class="card-title">Сервер</div>
+    <div class="card-row">
+      <span class="card-label">Провайдер</span>
+      <span class="card-value">Cloudflare</span>
+    </div>
+    <div class="card-row">
+      <span class="card-label">Протокол</span>
+      <span class="card-value">WS + TLS</span>
+    </div>
+    <div class="card-row">
+      <span class="card-label">Порт</span>
+      <span class="card-value">443</span>
+    </div>
+  </div>
+
+  <div class="status-area">
+    <div class="status-ring" id="ring"></div>
+    <div class="status-text" id="stxt">Отключено</div>
+  </div>
+
+  <button class="btn" id="btn" onclick="toggle()">Подключиться</button>
+
+</div>
+
+<script>
+  let busy = false;
+  let isOn = false;
+
+  function setUI(state) {
+    isOn = state === 'on';
+    const ring = document.getElementById('ring');
+    const stxt = document.getElementById('stxt');
+    const btn  = document.getElementById('btn');
+
+    ring.className = 'status-ring' + (state === 'on' ? ' on' : state === 'busy' ? ' busy' : '');
+
+    if (state === 'on') {
+      stxt.className = 'status-text on';
+      stxt.textContent = 'Подключено';
+      btn.className = 'btn on';
+      btn.textContent = 'Отключиться';
+      btn.disabled = false;
+    } else if (state === 'busy') {
+      stxt.className = 'status-text busy';
+      stxt.textContent = 'Подождите...';
+      btn.disabled = true;
+    } else {
+      stxt.className = 'status-text';
+      stxt.textContent = 'Отключено';
+      btn.className = 'btn';
+      btn.textContent = 'Подключиться';
+      btn.disabled = false;
+    }
+  }
+
+  async function toggle() {
+    if (busy) return;
+    busy = true;
+    setUI('busy');
+    try {
+      if (isOn) {
+        await window.api.disconnect();
+        setUI('off');
+      } else {
+        const r = await window.api.connect();
+        if (r.ok) {
+          setUI('on');
+        } else {
+          document.getElementById('stxt').textContent = 'Ошибка подключения';
+          document.getElementById('btn').disabled = false;
+        }
+      }
+    } catch (e) {
+      document.getElementById('stxt').textContent = 'Ошибка';
+      setUI('off');
+    }
+    busy = false;
+  }
+
+  (async () => {
+    const { connected } = await window.api.status();
+    setUI(connected ? 'on' : 'off');
+  })();
+</script>
+</body>
+</html>
