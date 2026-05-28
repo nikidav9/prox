@@ -1,3 +1,4 @@
 node_modules/
 .env
 .proxy_pass
+.wrangler/
