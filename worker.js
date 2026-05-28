@@ -24,15 +24,21 @@ export default {
       // DNS-over-HTTPS — proxies to Google DNS, bypasses ISP DNS injection
       // Works on Wi-Fi AND cellular, installs WITHOUT device supervision
       if (url.pathname === '/dns-query') {
-        const dohUrl = 'https://8.8.8.8/dns-query?' + url.searchParams.toString();
-        const upstream = await fetch(dohUrl, {
+        const dohTarget = new URL('https://dns.google/dns-query');
+        url.searchParams.forEach((v, k) => dohTarget.searchParams.set(k, v));
+        const upstream = await fetch(dohTarget.toString(), {
           method: request.method,
-          headers: { 'accept': request.headers.get('accept') || 'application/dns-json' },
+          headers: {
+            'accept': request.headers.get('accept') || 'application/dns-message',
+            ...(request.method === 'POST' && request.headers.get('content-type')
+              ? { 'content-type': request.headers.get('content-type') } : {}),
+          },
+          body: request.method === 'POST' ? request.body : undefined,
         });
         return new Response(upstream.body, {
           status: upstream.status,
           headers: {
-            'content-type': upstream.headers.get('content-type') || 'application/dns-json',
+            'content-type': upstream.headers.get('content-type') || 'application/dns-message',
             'cache-control': 'max-age=300',
             'access-control-allow-origin': '*',
           },
