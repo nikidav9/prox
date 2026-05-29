@@ -132,36 +132,79 @@ function stopXray() {
   if (xrayProcess) { try { xrayProcess.kill(); } catch (_) {} xrayProcess = null; }
 }
 
-// ── Fallback: built-in WS tunnel proxy ────────────────────────────────────────
+// ── Fallback: built-in WS tunnel proxy (raw TCP — handles HTTP + HTTPS) ────────
 
 function createProxyServer() {
   const WebSocket = require('ws');
-  const server = http.createServer((_req, res) => { res.writeHead(200); res.end('prox'); });
 
-  server.on('connect', (req, socket, head) => {
-    const colonIdx = req.url.lastIndexOf(':');
-    const host = req.url.slice(0, colonIdx);
-    const port = parseInt(req.url.slice(colonIdx + 1) || '443', 10);
-
-    socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
-    const pending = [];
-    if (head && head.length) pending.push(head);
-    socket.on('data', (chunk) => pending.push(chunk));
+  function openTunnel(socket, host, port, initial) {
+    const pending = initial ? [...initial] : [];
+    const bufData = (c) => pending.push(c);
+    socket.on('data', bufData);
 
     const ws = new WebSocket(
       `${WS_ENDPOINT}?token=${VLESS_UUID}&host=${encodeURIComponent(host)}&port=${port}`
     );
     ws.on('open', () => {
+      socket.removeListener('data', bufData);
       for (const c of pending) ws.send(c);
       pending.length = 0;
-      socket.removeAllListeners('data');
-      socket.on('data', (chunk) => { if (ws.readyState === WebSocket.OPEN) ws.send(chunk); });
+      socket.on('data', (c) => { if (ws.readyState === WebSocket.OPEN) ws.send(c); });
     });
-    ws.on('message', (data) => { try { socket.write(data); } catch (_) {} });
+    ws.on('message', (d) => { try { socket.write(d); } catch (_) {} });
     ws.on('error',   () => { try { socket.destroy(); } catch (_) {} });
     ws.on('close',   () => { try { socket.destroy(); } catch (_) {} });
     socket.on('error', () => { try { ws.close(); } catch (_) {} });
     socket.on('end',   () => { try { ws.close(); } catch (_) {} });
+  }
+
+  // Raw TCP server — handles both CONNECT (HTTPS) and GET/POST (HTTP)
+  const server = net.createServer((socket) => {
+    let headerBuf = Buffer.alloc(0);
+
+    function onHeader(chunk) {
+      headerBuf = Buffer.concat([headerBuf, chunk]);
+      const end = headerBuf.indexOf('\r\n\r\n');
+      if (end < 0) return;
+
+      socket.removeListener('data', onHeader);
+      const body = headerBuf.slice(end + 4);
+      const firstLine = headerBuf.slice(0, headerBuf.indexOf('\r\n')).toString();
+      const [method, url] = firstLine.split(' ');
+
+      if (method === 'CONNECT') {
+        // HTTPS tunnel
+        const ci = url.lastIndexOf(':');
+        const host = url.slice(0, ci);
+        const port = parseInt(url.slice(ci + 1) || '443', 10);
+        socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+        openTunnel(socket, host, port, body.length ? [body] : []);
+
+      } else if (url && url.startsWith('http://')) {
+        // Plain HTTP proxy request — rebuild without proxy headers, tunnel to host:80
+        try {
+          const parsed = new URL(url);
+          const host = parsed.hostname;
+          const port = parseInt(parsed.port || '80', 10);
+          const path = (parsed.pathname || '/') + (parsed.search || '');
+
+          const lines = headerBuf.slice(0, end).toString().split('\r\n');
+          let req = `${method} ${path} HTTP/1.1\r\n`;
+          for (let i = 1; i < lines.length; i++) {
+            if (!lines[i].toLowerCase().startsWith('proxy-')) req += lines[i] + '\r\n';
+          }
+          req += 'Connection: close\r\n\r\n';
+
+          openTunnel(socket, host, port, [Buffer.from(req), ...(body.length ? [body] : [])]);
+        } catch (_) { socket.end(); }
+
+      } else {
+        socket.end('HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nprox');
+      }
+    }
+
+    socket.on('error', () => {});
+    socket.on('data', onHeader);
   });
 
   return server;
@@ -205,17 +248,17 @@ ipcMain.handle('connect', async () => {
         notify('Запуск Xray...');
         await startXray(xrayPath);
         xrayOk = true;
+        notify('Xray запущен (VLESS)');
       } catch (e) {
         stopXray();
-        notify('Xray заблокирован антивирусом — резервный режим...');
-        // short pause so user sees the message
-        await new Promise(r => setTimeout(r, 1200));
+        notify('Xray заблокирован — добавьте xray.exe в исключения антивируса');
+        await new Promise(r => setTimeout(r, 2000));
       }
     }
 
-    // 2. Fallback: built-in WS proxy
+    // 2. Fallback: built-in WS proxy (HTTP + HTTPS)
     if (!xrayOk) {
-      notify('Запуск встроенного прокси...');
+      notify('Запуск резервного прокси...');
       if (!proxyServer) {
         proxyServer = createProxyServer();
         await new Promise((resolve, reject) => {
@@ -223,6 +266,8 @@ ipcMain.handle('connect', async () => {
           proxyServer.once('error', reject);
         });
       }
+      notify('Резервный прокси запущен');
+      await new Promise(r => setTimeout(r, 800));
     }
 
     await new Promise(r => setProxy(true, r));
