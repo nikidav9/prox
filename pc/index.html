@@ -9,7 +9,7 @@
 
   body {
     font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
-    background: #f2f2f7;
+    background: #f5f4f8;
     color: #1c1c1e;
     height: 100vh;
     display: flex;
@@ -28,129 +28,127 @@
     flex-shrink: 0;
     gap: 8px;
   }
-
-  /* Status dot — left side */
   .conn-dot {
-    width: 11px; height: 11px;
+    width: 10px; height: 10px;
     border-radius: 50%;
     background: #ff3b30;
     flex-shrink: 0;
     transition: background .4s;
-    box-shadow: 0 0 0 2px rgba(255,59,48,.2);
   }
-  .conn-dot.on   { background: #34c759; box-shadow: 0 0 0 2px rgba(52,199,89,.2); }
-  .conn-dot.busy { background: #ffd60a; box-shadow: 0 0 0 2px rgba(255,214,10,.2); }
-
+  .conn-dot.on   { background: #34c759; }
+  .conn-dot.busy { background: #ffd60a; }
   .titlebar-spacer { flex: 1; }
-
-  /* Close button — right side */
   .close-btn {
     width: 13px; height: 13px;
     border-radius: 50%;
     background: #ff5f57;
     border: none; cursor: pointer;
     -webkit-app-region: no-drag;
-    transition: filter .15s;
     flex-shrink: 0;
   }
   .close-btn:hover { filter: brightness(1.15); }
 
-  /* ── Main layout ── */
+  /* ── Page ── */
   .page {
     flex: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 0 28px 16px;
+    padding: 2px 24px 14px;
   }
 
-  /* ── App name ── */
+  /* ── Title ── */
   .app-title {
-    font-size: 26px;
-    font-weight: 700;
-    letter-spacing: -0.3px;
-    margin-bottom: 14px;
-    color: #1c1c1e;
+    font-size: 30px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    margin-bottom: 8px;
   }
-  .app-title span { color: #7b68ee; }
+  .app-title .brand { color: #1c1c1e; }
+  .app-title .accent { color: #7b68ee; }
 
-  /* ── Mascot circle ── */
-  .mascot-wrap {
-    width: 210px; height: 210px;
-    border-radius: 50%;
-    background: #e4e0ff;
-    display: flex;
-    align-items: flex-end;
-    justify-content: center;
-    overflow: hidden;
-    margin-bottom: 22px;
-    flex-shrink: 0;
+  /* ── Bear area ── */
+  .mascot-area {
     position: relative;
+    width: 260px;
+    height: 296px;
+    flex-shrink: 0;
+    margin-bottom: 6px;
   }
-  .bear { width: 185px; height: 195px; }
+  .mascot-circle {
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 232px;
+    height: 232px;
+    border-radius: 50%;
+    background: #eae6ff;
+  }
+  .bear-svg {
+    position: absolute;
+    bottom: -2px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 248px;
+    height: 296px;
+    z-index: 1;
+  }
 
   /* ── Status label ── */
   .status-label {
-    font-size: 15px;
-    font-weight: 600;
-    letter-spacing: 0.2px;
-    margin-bottom: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #9898a5;
+    margin-bottom: 10px;
+    letter-spacing: 0.1px;
     transition: color .3s;
-    color: #8e8e93;
   }
-  .status-label.on   { color: #34c759; }
-  .status-label.busy { color: #ffd60a; }
+  .status-label.on   { color: #7b68ee; font-weight: 700; }
+  .status-label.busy { color: #ffd60a; font-weight: 600; }
 
-  /* ── Big iOS toggle ── */
+  /* ── Toggle ── */
   .toggle-wrap {
-    width: 180px; height: 86px;
-    background: #e0daf8;
-    border-radius: 43px;
+    width: 196px;
+    height: 76px;
+    background: #e6e1ff;
+    border-radius: 38px;
     padding: 8px;
     cursor: pointer;
     -webkit-app-region: no-drag;
     position: relative;
-    transition: background .4s;
-    box-shadow: inset 0 2px 8px rgba(0,0,0,.08), 0 4px 16px rgba(123,104,238,.2);
+    transition: background .38s;
     margin-bottom: 14px;
-    margin-top: 10px;
     flex-shrink: 0;
   }
-  .toggle-wrap.on {
-    background: #7b68ee;
-    box-shadow: inset 0 2px 8px rgba(0,0,0,.1), 0 6px 24px rgba(123,104,238,.45);
-  }
-  .toggle-wrap.busy { cursor: default; opacity: 0.7; }
-
+  .toggle-wrap.on   { background: #7b68ee; }
+  .toggle-wrap.busy { cursor: default; opacity: 0.6; }
   .toggle-knob {
-    width: 70px; height: 70px;
+    width: 60px; height: 60px;
     border-radius: 50%;
     background: white;
-    box-shadow: 0 3px 12px rgba(0,0,0,.18);
+    box-shadow: 0 2px 12px rgba(0,0,0,.14);
     position: absolute;
     top: 8px; left: 8px;
-    transition: left .35s cubic-bezier(.34,1.4,.64,1);
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    transition: left .32s cubic-bezier(.34,1.5,.64,1);
   }
-  .toggle-wrap.on .toggle-knob { left: calc(100% - 78px); }
-  .knob-icon { font-size: 28px; transition: opacity .2s; }
+  .toggle-wrap.on .toggle-knob { left: calc(100% - 68px); }
 
-  /* ── Hint / error text ── */
+  /* ── Hint ── */
   .hint {
     font-size: 13px;
-    color: #8e8e93;
+    color: #9898a5;
     text-align: center;
     line-height: 1.55;
-    min-height: 36px;
+    min-height: 38px;
+    padding: 0 6px;
   }
   .hint.error { color: #ff3b30; }
 
   /* ── Bottom nav ── */
   .bottom-nav {
-    height: 60px;
-    background: #e8e8ed;
+    height: 62px;
+    background: #ebebf0;
     border-radius: 18px;
     display: flex;
     align-items: center;
@@ -162,15 +160,15 @@
   .nav-item {
     display: flex; flex-direction: column;
     align-items: center; gap: 3px;
-    cursor: pointer; padding: 8px 24px;
+    cursor: pointer; padding: 8px 28px;
     border-radius: 12px; transition: background .15s;
   }
   .nav-item:hover { background: rgba(0,0,0,.05); }
-  .nav-item.active .nav-label { color: #7b68ee; font-weight: 600; }
   .nav-item svg { width: 22px; height: 22px; }
-  .nav-item.active svg { stroke: #7b68ee; }
-  .nav-item:not(.active) svg { stroke: #8e8e93; }
-  .nav-label { font-size: 11px; color: #8e8e93; }
+  .nav-item.active svg { stroke: #1c1c1e; }
+  .nav-item:not(.active) svg { stroke: #9898a5; }
+  .nav-label { font-size: 11px; color: #9898a5; }
+  .nav-item.active .nav-label { color: #1c1c1e; font-weight: 700; }
 </style>
 </head>
 <body>
@@ -183,66 +181,110 @@
 
 <div class="page">
 
-  <div class="app-title">prox<span>VPN</span></div>
+  <div class="app-title"><span class="brand">prox</span><span class="accent">VPN</span></div>
 
-  <!-- Bear mascot -->
-  <div class="mascot-wrap">
-    <svg class="bear" viewBox="0 0 190 200" xmlns="http://www.w3.org/2000/svg">
-      <!-- Body / hoodie -->
-      <ellipse cx="95" cy="195" rx="72" ry="48" fill="#7b68ee"/>
-      <ellipse cx="95" cy="165" rx="42" ry="35" fill="#7b68ee"/>
-      <!-- Hoodie zipper line -->
-      <line x1="95" y1="148" x2="95" y2="195" stroke="#6456d4" stroke-width="2.5" stroke-dasharray="3,3"/>
-      <!-- Shield badge -->
-      <path d="M107 158 L107 168 Q107 173 113 176 Q119 173 119 168 L119 158 Z" fill="white" opacity="0.9"/>
-      <text x="113" y="170" text-anchor="middle" font-size="9" fill="#7b68ee" font-weight="900">V</text>
+  <!-- Bear mascot matching reference image -->
+  <div class="mascot-area">
+    <div class="mascot-circle"></div>
+    <svg class="bear-svg" viewBox="0 0 248 296" xmlns="http://www.w3.org/2000/svg">
 
-      <!-- Left ear -->
-      <circle cx="42" cy="68" r="24" fill="#b87040"/>
-      <circle cx="42" cy="68" r="14" fill="#d4916a"/>
-      <!-- Right ear -->
-      <circle cx="148" cy="68" r="24" fill="#b87040"/>
-      <circle cx="148" cy="68" r="14" fill="#d4916a"/>
+      <!-- ── Hoodie body ── -->
+      <path d="M20 296 L20 210 Q20 182 48 174 L200 174 Q228 182 228 210 L228 296 Z" fill="#7b68ee"/>
 
-      <!-- Head -->
-      <circle cx="95" cy="108" r="62" fill="#c07840"/>
+      <!-- Hoodie kangaroo pocket -->
+      <path d="M84 230 Q124 238 164 230 L164 260 Q164 274 124 276 Q84 274 84 260 Z" fill="#6b5cd6"/>
 
-      <!-- Muzzle -->
-      <ellipse cx="95" cy="122" rx="36" ry="28" fill="#d4916a"/>
+      <!-- Zipper line -->
+      <line x1="124" y1="174" x2="124" y2="296" stroke="#5c4ed4" stroke-width="2" stroke-dasharray="5,4"/>
 
-      <!-- Sunglasses frame -->
-      <rect x="52" y="92" width="36" height="20" rx="10" fill="#1a1535" opacity="0.92"/>
-      <rect x="102" y="92" width="36" height="20" rx="10" fill="#1a1535" opacity="0.92"/>
+      <!-- Zipper pull tab -->
+      <rect x="119" y="186" width="10" height="7" rx="2" fill="#9b8ef0"/>
+
+      <!-- Shield badge on chest -->
+      <path d="M74 196 L74 218 Q74 229 84 234 Q94 229 94 218 L94 196 Z"
+            fill="white" opacity="0.92"/>
+      <text x="84" y="220" text-anchor="middle" font-size="13"
+            fill="#7b68ee" font-weight="900">V</text>
+
+      <!-- Crossed arms -->
+      <ellipse cx="78"  cy="248" rx="66" ry="27" fill="#6b5cd6"
+               transform="rotate(-10 78 248)"/>
+      <ellipse cx="170" cy="248" rx="66" ry="27" fill="#6b5cd6"
+               transform="rotate(10 170 248)"/>
+      <!-- Arm overlap highlight -->
+      <ellipse cx="124" cy="246" rx="28" ry="18" fill="#7060dc"/>
+
+      <!-- Sleeve cuffs -->
+      <ellipse cx="36"  cy="250" rx="20" ry="14" fill="#8878ee"
+               transform="rotate(-15 36 250)"/>
+      <ellipse cx="212" cy="250" rx="20" ry="14" fill="#8878ee"
+               transform="rotate(15 212 250)"/>
+
+      <!-- ── Left ear ── -->
+      <circle cx="54"  cy="88" r="34" fill="#b87040"/>
+      <circle cx="54"  cy="88" r="20" fill="#d4915a"/>
+
+      <!-- ── Right ear ── -->
+      <circle cx="194" cy="88" r="34" fill="#b87040"/>
+      <circle cx="194" cy="88" r="20" fill="#d4915a"/>
+
+      <!-- ── Head ── -->
+      <circle cx="124" cy="128" r="82" fill="#c87840"/>
+
+      <!-- ── Muzzle ── -->
+      <ellipse cx="124" cy="154" rx="48" ry="36" fill="#d4916a"/>
+
+      <!-- ── Eyebrows ── -->
+      <path d="M76 110 Q96 100 114 107" stroke="#7a4820" stroke-width="4"
+            fill="none" stroke-linecap="round"/>
+      <path d="M134 107 Q152 100 172 110" stroke="#7a4820" stroke-width="4"
+            fill="none" stroke-linecap="round"/>
+
+      <!-- ── Visor goggles (wide, cyberpunk style) ── -->
+      <!-- Frame -->
+      <rect x="54"  y="112" width="140" height="42" rx="14" fill="#18182e"/>
+      <!-- Left lens -->
+      <rect x="58"  y="116" width="56"  height="34" rx="10" fill="#0c0c20"/>
+      <!-- Right lens -->
+      <rect x="134" y="116" width="56"  height="34" rx="10" fill="#0c0c20"/>
       <!-- Bridge -->
-      <rect x="88" y="99" width="14" height="4" rx="2" fill="#1a1535" opacity="0.92"/>
-      <!-- Lens shine -->
-      <ellipse cx="63" cy="98" rx="6" ry="4" fill="white" opacity="0.18"/>
-      <ellipse cx="113" cy="98" rx="6" ry="4" fill="white" opacity="0.18"/>
+      <rect x="114" y="124" width="20"  height="12" rx="4"  fill="#18182e"/>
 
-      <!-- Nose -->
-      <ellipse cx="95" cy="118" rx="9" ry="7" fill="#2a1505"/>
-      <!-- Smile -->
-      <path d="M80 130 Q95 143 110 130" stroke="#2a1505" stroke-width="3"
-        fill="none" stroke-linecap="round"/>
+      <!-- Blue LED strip — left side of frame -->
+      <rect x="52" y="120" width="4" height="18" rx="2" fill="#29b6f6"/>
+      <circle cx="54" cy="120" r="2.5" fill="#81d4fa"/>
+      <circle cx="54" cy="138" r="2"   fill="#4fc3f7" opacity="0.7"/>
 
-      <!-- Cheek blush -->
-      <ellipse cx="65" cy="126" rx="10" ry="6" fill="#e8824a" opacity="0.35"/>
-      <ellipse cx="125" cy="126" rx="10" ry="6" fill="#e8824a" opacity="0.35"/>
+      <!-- Blue LED strip — right side of frame -->
+      <rect x="192" y="120" width="4" height="18" rx="2" fill="#29b6f6"/>
+      <circle cx="194" cy="120" r="2.5" fill="#81d4fa"/>
+      <circle cx="194" cy="138" r="2"   fill="#4fc3f7" opacity="0.7"/>
 
-      <!-- Folded arms -->
-      <ellipse cx="60" cy="178" rx="28" ry="16" fill="#6b5cd6"/>
-      <ellipse cx="130" cy="178" rx="28" ry="16" fill="#6b5cd6"/>
+      <!-- Lens glare reflections -->
+      <ellipse cx="84"  cy="122" rx="14" ry="5" fill="white" opacity="0.09"/>
+      <ellipse cx="160" cy="122" rx="14" ry="5" fill="white" opacity="0.09"/>
+
+      <!-- ── Nose ── -->
+      <ellipse cx="124" cy="152" rx="13" ry="10" fill="#2a1505"/>
+      <ellipse cx="121" cy="149" rx="4"  ry="3"  fill="white" opacity="0.22"/>
+
+      <!-- ── Smile ── -->
+      <path d="M106 170 Q124 185 142 170" stroke="#2a1505" stroke-width="2.8"
+            fill="none" stroke-linecap="round"/>
+
+      <!-- ── Cheek blush ── -->
+      <ellipse cx="84"  cy="165" rx="18" ry="10" fill="#e07840" opacity="0.22"/>
+      <ellipse cx="164" cy="165" rx="18" ry="10" fill="#e07840" opacity="0.22"/>
+
     </svg>
   </div>
 
-  <!-- Status text -->
+  <!-- Status -->
   <div class="status-label" id="slbl">Отключено</div>
 
-  <!-- Big toggle -->
+  <!-- Toggle -->
   <div class="toggle-wrap" id="toggle" onclick="toggle()">
-    <div class="toggle-knob">
-      <span class="knob-icon" id="icon">🔒</span>
-    </div>
+    <div class="toggle-knob" id="knob"></div>
   </div>
 
   <!-- Hint / progress / error -->
@@ -253,16 +295,30 @@
 <!-- Bottom nav -->
 <div class="bottom-nav">
   <div class="nav-item active">
-    <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round">
       <path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z"/>
       <path d="M9 21V12h6v9"/>
     </svg>
-    <span class="nav-label" style="color:#7b68ee;font-weight:600">Главная</span>
+    <span class="nav-label">Главная</span>
   </div>
-  <div class="nav-item" onclick="">
-    <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <div class="nav-item">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round">
       <circle cx="12" cy="12" r="3"/>
-      <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+      <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83
+               2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33
+               1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09
+               A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06
+               a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15
+               a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09
+               A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06
+               a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68
+               a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09
+               a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06
+               a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9
+               a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09
+               a1.65 1.65 0 00-1.51 1z"/>
     </svg>
     <span class="nav-label">Настройки</span>
   </div>
@@ -274,40 +330,35 @@
 
   function ui(state, msg) {
     on = state === 'on';
+
     const tog  = document.getElementById('toggle');
     const slbl = document.getElementById('slbl');
-    const icon = document.getElementById('icon');
     const hint = document.getElementById('hint');
     const dot  = document.getElementById('connDot');
 
     tog.className  = 'toggle-wrap' + (on ? ' on' : state === 'busy' ? ' busy' : '');
-    dot.className  = 'conn-dot' + (on ? ' on' : state === 'busy' ? ' busy' : '');
-    hint.className = 'hint' + (state === 'error' ? ' error' : '');
+    dot.className  = 'conn-dot'    + (on ? ' on' : state === 'busy' ? ' busy' : '');
+    hint.className = 'hint'        + (state === 'error' ? ' error' : '');
 
     if (state === 'on') {
       slbl.textContent = 'Подключено';
       slbl.className   = 'status-label on';
-      icon.textContent = '🔓';
-      hint.textContent = 'VPN активен. Нажми для отключения.';
+      hint.textContent = 'VPN активен. Нажми чтобы отключить.';
     } else if (state === 'busy') {
       slbl.textContent = 'Подождите...';
       slbl.className   = 'status-label busy';
-      icon.textContent = '⏳';
       hint.textContent = msg || '';
     } else if (state === 'error') {
       slbl.textContent = 'Ошибка';
       slbl.className   = 'status-label';
-      icon.textContent = '🔒';
       hint.textContent = msg || 'Не удалось подключиться';
     } else {
       slbl.textContent = 'Отключено';
       slbl.className   = 'status-label';
-      icon.textContent = '🔒';
       hint.textContent = 'Нажми переключатель\nчтобы подключиться';
     }
   }
 
-  // Live progress messages during connection
   window.api.onStatus((msg) => {
     if (busy) document.getElementById('hint').textContent = msg;
   });
@@ -325,7 +376,7 @@
         if (r.ok) {
           ui('on');
         } else {
-          ui('error', r.error ? r.error.slice(0, 120) : 'Не удалось подключиться');
+          ui('error', r.error ? r.error.slice(0, 140) : 'Не удалось подключиться');
           setTimeout(() => ui('off'), 4000);
         }
       }
