@@ -25,6 +25,7 @@
       "main.js",
       "preload.js",
       "index.html",
+      "resources/bear.png",
       "node_modules/**/*"
     ],
     "win": {

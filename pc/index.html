@@ -70,28 +70,31 @@
   /* ── Bear area ── */
   .mascot-area {
     position: relative;
-    width: 260px;
-    height: 296px;
+    width: 270px;
+    height: 310px;
     flex-shrink: 0;
-    margin-bottom: 6px;
+    margin-bottom: 4px;
   }
   .mascot-circle {
     position: absolute;
     bottom: 0;
     left: 50%;
     transform: translateX(-50%);
-    width: 232px;
-    height: 232px;
+    width: 230px;
+    height: 230px;
     border-radius: 50%;
     background: #eae6ff;
   }
-  .bear-svg {
+  .bear-img {
     position: absolute;
-    bottom: -2px;
+    bottom: 0px;
     left: 50%;
     transform: translateX(-50%);
-    width: 248px;
-    height: 296px;
+    width: 262px;
+    height: 300px;
+    object-fit: cover;
+    object-position: top center;
+    mix-blend-mode: multiply;
     z-index: 1;
   }
 
@@ -183,100 +186,10 @@
 
   <div class="app-title"><span class="brand">prox</span><span class="accent">VPN</span></div>
 
-  <!-- Bear mascot matching reference image -->
+  <!-- Bear mascot — PNG image -->
   <div class="mascot-area">
     <div class="mascot-circle"></div>
-    <svg class="bear-svg" viewBox="0 0 248 296" xmlns="http://www.w3.org/2000/svg">
-
-      <!-- ── Hoodie body ── -->
-      <path d="M20 296 L20 210 Q20 182 48 174 L200 174 Q228 182 228 210 L228 296 Z" fill="#7b68ee"/>
-
-      <!-- Hoodie kangaroo pocket -->
-      <path d="M84 230 Q124 238 164 230 L164 260 Q164 274 124 276 Q84 274 84 260 Z" fill="#6b5cd6"/>
-
-      <!-- Zipper line -->
-      <line x1="124" y1="174" x2="124" y2="296" stroke="#5c4ed4" stroke-width="2" stroke-dasharray="5,4"/>
-
-      <!-- Zipper pull tab -->
-      <rect x="119" y="186" width="10" height="7" rx="2" fill="#9b8ef0"/>
-
-      <!-- Shield badge on chest -->
-      <path d="M74 196 L74 218 Q74 229 84 234 Q94 229 94 218 L94 196 Z"
-            fill="white" opacity="0.92"/>
-      <text x="84" y="220" text-anchor="middle" font-size="13"
-            fill="#7b68ee" font-weight="900">V</text>
-
-      <!-- Crossed arms -->
-      <ellipse cx="78"  cy="248" rx="66" ry="27" fill="#6b5cd6"
-               transform="rotate(-10 78 248)"/>
-      <ellipse cx="170" cy="248" rx="66" ry="27" fill="#6b5cd6"
-               transform="rotate(10 170 248)"/>
-      <!-- Arm overlap highlight -->
-      <ellipse cx="124" cy="246" rx="28" ry="18" fill="#7060dc"/>
-
-      <!-- Sleeve cuffs -->
-      <ellipse cx="36"  cy="250" rx="20" ry="14" fill="#8878ee"
-               transform="rotate(-15 36 250)"/>
-      <ellipse cx="212" cy="250" rx="20" ry="14" fill="#8878ee"
-               transform="rotate(15 212 250)"/>
-
-      <!-- ── Left ear ── -->
-      <circle cx="54"  cy="88" r="34" fill="#b87040"/>
-      <circle cx="54"  cy="88" r="20" fill="#d4915a"/>
-
-      <!-- ── Right ear ── -->
-      <circle cx="194" cy="88" r="34" fill="#b87040"/>
-      <circle cx="194" cy="88" r="20" fill="#d4915a"/>
-
-      <!-- ── Head ── -->
-      <circle cx="124" cy="128" r="82" fill="#c87840"/>
-
-      <!-- ── Muzzle ── -->
-      <ellipse cx="124" cy="154" rx="48" ry="36" fill="#d4916a"/>
-
-      <!-- ── Eyebrows ── -->
-      <path d="M76 110 Q96 100 114 107" stroke="#7a4820" stroke-width="4"
-            fill="none" stroke-linecap="round"/>
-      <path d="M134 107 Q152 100 172 110" stroke="#7a4820" stroke-width="4"
-            fill="none" stroke-linecap="round"/>
-
-      <!-- ── Visor goggles (wide, cyberpunk style) ── -->
-      <!-- Frame -->
-      <rect x="54"  y="112" width="140" height="42" rx="14" fill="#18182e"/>
-      <!-- Left lens -->
-      <rect x="58"  y="116" width="56"  height="34" rx="10" fill="#0c0c20"/>
-      <!-- Right lens -->
-      <rect x="134" y="116" width="56"  height="34" rx="10" fill="#0c0c20"/>
-      <!-- Bridge -->
-      <rect x="114" y="124" width="20"  height="12" rx="4"  fill="#18182e"/>
-
-      <!-- Blue LED strip — left side of frame -->
-      <rect x="52" y="120" width="4" height="18" rx="2" fill="#29b6f6"/>
-      <circle cx="54" cy="120" r="2.5" fill="#81d4fa"/>
-      <circle cx="54" cy="138" r="2"   fill="#4fc3f7" opacity="0.7"/>
-
-      <!-- Blue LED strip — right side of frame -->
-      <rect x="192" y="120" width="4" height="18" rx="2" fill="#29b6f6"/>
-      <circle cx="194" cy="120" r="2.5" fill="#81d4fa"/>
-      <circle cx="194" cy="138" r="2"   fill="#4fc3f7" opacity="0.7"/>
-
-      <!-- Lens glare reflections -->
-      <ellipse cx="84"  cy="122" rx="14" ry="5" fill="white" opacity="0.09"/>
-      <ellipse cx="160" cy="122" rx="14" ry="5" fill="white" opacity="0.09"/>
-
-      <!-- ── Nose ── -->
-      <ellipse cx="124" cy="152" rx="13" ry="10" fill="#2a1505"/>
-      <ellipse cx="121" cy="149" rx="4"  ry="3"  fill="white" opacity="0.22"/>
-
-      <!-- ── Smile ── -->
-      <path d="M106 170 Q124 185 142 170" stroke="#2a1505" stroke-width="2.8"
-            fill="none" stroke-linecap="round"/>
-
-      <!-- ── Cheek blush ── -->
-      <ellipse cx="84"  cy="165" rx="18" ry="10" fill="#e07840" opacity="0.22"/>
-      <ellipse cx="164" cy="165" rx="18" ry="10" fill="#e07840" opacity="0.22"/>
-
-    </svg>
+    <img class="bear-img" src="resources/bear.png" alt="bear" />
   </div>
 
   <!-- Status -->
