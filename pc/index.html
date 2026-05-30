@@ -54,7 +54,7 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 2px 24px 14px;
+    padding: 0px 24px 10px;
   }
 
   /* ── Title ── */
@@ -62,36 +62,32 @@
     font-size: 30px;
     font-weight: 800;
     letter-spacing: -0.5px;
-    margin-bottom: 8px;
+    margin-bottom: 4px;
   }
-  .app-title .brand { color: #1c1c1e; }
+  .app-title .brand  { color: #1c1c1e; }
   .app-title .accent { color: #7b68ee; }
 
   /* ── Bear area ── */
   .mascot-area {
     position: relative;
-    width: 280px;
-    height: 330px;
+    width: 260px;
+    height: 300px;
     flex-shrink: 0;
-    margin-bottom: 2px;
+    margin-bottom: 0px;
   }
   .mascot-circle {
     position: absolute;
-    bottom: 0;
-    left: 50%;
+    bottom: 0; left: 50%;
     transform: translateX(-50%);
-    width: 234px;
-    height: 234px;
+    width: 210px; height: 210px;
     border-radius: 50%;
     background: #eae6ff;
   }
   .bear-img {
     position: absolute;
-    bottom: 10px;
-    left: 50%;
+    bottom: 8px; left: 50%;
     transform: translateX(-50%);
-    width: 290px;
-    height: 360px;
+    width: 260px; height: 320px;
     object-fit: cover;
     object-position: center 12%;
     mix-blend-mode: multiply;
@@ -100,20 +96,54 @@
 
   /* ── Status label ── */
   .status-label {
-    font-size: 14px;
-    font-weight: 500;
-    color: #9898a5;
-    margin-bottom: 10px;
-    letter-spacing: 0.1px;
-    transition: color .3s;
+    font-size: 14px; font-weight: 500;
+    color: #9898a5; margin-bottom: 4px;
+    letter-spacing: 0.1px; transition: color .3s;
   }
   .status-label.on   { color: #7b68ee; font-weight: 700; }
   .status-label.busy { color: #ffd60a; font-weight: 600; }
 
+  /* ── Server selector ── */
+  .server-tabs {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 10px;
+    -webkit-app-region: no-drag;
+  }
+  .srv-tab {
+    display: flex; align-items: center; gap: 5px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    border: 1.5px solid #e0ddf0;
+    background: white;
+    font-size: 13px; font-weight: 500;
+    color: #9898a5;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .srv-tab.active {
+    border-color: #7b68ee;
+    background: #f0eeff;
+    color: #7b68ee;
+    font-weight: 700;
+  }
+  .srv-tab:disabled { opacity: 0.5; cursor: default; }
+  .srv-tab .dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0.5;
+  }
+  .srv-tab.active .dot { opacity: 1; }
+  .srv-note {
+    font-size: 11px; color: #c0becc;
+    margin-bottom: 6px;
+    min-height: 14px;
+  }
+
   /* ── Toggle ── */
   .toggle-wrap {
-    width: 196px;
-    height: 76px;
+    width: 196px; height: 76px;
     background: #e6e1ff;
     border-radius: 38px;
     padding: 8px;
@@ -121,12 +151,12 @@
     -webkit-app-region: no-drag;
     position: relative;
     transition: background .38s;
-    margin-bottom: 14px;
+    margin-bottom: 10px;
     flex-shrink: 0;
   }
   .toggle-wrap.on       { background: #7b68ee; }
   .toggle-wrap.going-on { background: #7b68ee; opacity: 0.6; cursor: default; }
-  .toggle-wrap.going-off                      { opacity: 0.6; cursor: default; }
+  .toggle-wrap.going-off                       { opacity: 0.6; cursor: default; }
   .toggle-knob {
     width: 60px; height: 60px;
     border-radius: 50%;
@@ -136,28 +166,23 @@
     top: 8px; left: 8px;
     transition: left .32s cubic-bezier(.34,1.5,.64,1);
   }
-  .toggle-wrap.on .toggle-knob,
+  .toggle-wrap.on      .toggle-knob,
   .toggle-wrap.going-on .toggle-knob { left: calc(100% - 68px); }
 
   /* ── Hint ── */
   .hint {
-    font-size: 13px;
-    color: #9898a5;
-    text-align: center;
-    line-height: 1.55;
-    min-height: 38px;
-    padding: 0 6px;
+    font-size: 13px; color: #9898a5;
+    text-align: center; line-height: 1.55;
+    min-height: 34px; padding: 0 6px;
   }
   .hint.error { color: #ff3b30; }
 
   /* ── Bottom nav ── */
   .bottom-nav {
-    height: 62px;
+    height: 58px;
     background: #ebebf0;
     border-radius: 18px;
-    display: flex;
-    align-items: center;
-    justify-content: space-around;
+    display: flex; align-items: center; justify-content: space-around;
     width: 100%;
     flex-shrink: 0;
     -webkit-app-region: no-drag;
@@ -165,7 +190,7 @@
   .nav-item {
     display: flex; flex-direction: column;
     align-items: center; gap: 3px;
-    cursor: pointer; padding: 8px 28px;
+    cursor: pointer; padding: 6px 28px;
     border-radius: 12px; transition: background .15s;
   }
   .nav-item:hover { background: rgba(0,0,0,.05); }
@@ -185,29 +210,34 @@
 </div>
 
 <div class="page">
-
   <div class="app-title"><span class="brand">prox</span><span class="accent">VPN</span></div>
 
-  <!-- Bear mascot — PNG image -->
   <div class="mascot-area">
     <div class="mascot-circle"></div>
     <img class="bear-img" src="resources/F87E59E3-4CFD-486B-AF7C-438D00F84FF8.jpeg" alt="bear" />
   </div>
 
-  <!-- Status -->
   <div class="status-label" id="slbl">Отключено</div>
+
+  <!-- Server selector -->
+  <div class="server-tabs">
+    <button class="srv-tab active" id="tab-cf" onclick="selectServer('cf')">
+      <span class="dot"></span>Cloudflare
+    </button>
+    <button class="srv-tab" id="tab-railway" onclick="selectServer('railway')">
+      <span class="dot"></span>Railway
+    </button>
+  </div>
+  <div class="srv-note" id="srvNote">Безлимитный · через Cloudflare</div>
 
   <!-- Toggle -->
   <div class="toggle-wrap" id="toggle" onclick="toggle()">
     <div class="toggle-knob" id="knob"></div>
   </div>
 
-  <!-- Hint / progress / error -->
   <div class="hint" id="hint">Нажми переключатель<br>чтобы подключиться</div>
-
 </div>
 
-<!-- Bottom nav -->
 <div class="bottom-nav">
   <div class="nav-item active">
     <svg viewBox="0 0 24 24" fill="none" stroke-width="2"
@@ -217,65 +247,80 @@
     </svg>
     <span class="nav-label">Главная</span>
   </div>
-  <div class="nav-item">
+  <div class="nav-item" onclick="window.api.quit()">
     <svg viewBox="0 0 24 24" fill="none" stroke-width="2"
          stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="12" cy="12" r="3"/>
-      <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83
-               2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33
-               1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09
-               A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06
-               a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15
-               a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09
-               A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06
-               a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68
-               a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09
-               a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06
-               a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9
-               a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09
-               a1.65 1.65 0 00-1.51 1z"/>
+      <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>
+      <polyline points="16 17 21 12 16 7"/>
+      <line x1="21" y1="12" x2="9" y2="12"/>
     </svg>
-    <span class="nav-label">Настройки</span>
+    <span class="nav-label">Выйти</span>
   </div>
 </div>
 
 <script>
-  let busy = false;
-  let on   = false;
+  const SERVER_NOTES = {
+    cf:      'Безлимитный · через Cloudflare',
+    railway: 'Прямое подключение · Railway',
+  };
 
-  function ui(state, msg) {
+  let busy      = false;
+  let on        = false;
+  let selServer = 'cf';
+
+  function selectServer(key) {
+    if (busy || on) return;
+    selServer = key;
+    window.api.setServer(key);
+    document.getElementById('tab-cf').classList.toggle('active', key === 'cf');
+    document.getElementById('tab-railway').classList.toggle('active', key === 'railway');
+    document.getElementById('srvNote').textContent = SERVER_NOTES[key] || '';
+  }
+
+  function setTabsDisabled(dis) {
+    document.getElementById('tab-cf').disabled = dis;
+    document.getElementById('tab-railway').disabled = dis;
+  }
+
+  function ui(state, msg, serverLabel) {
     on = state === 'on';
-
     const tog  = document.getElementById('toggle');
     const slbl = document.getElementById('slbl');
     const hint = document.getElementById('hint');
     const dot  = document.getElementById('connDot');
 
-    const cls = { 'on': 'on', 'going-on': 'going-on', 'going-off': 'going-off' }[state] || '';
-    tog.className  = 'toggle-wrap' + (cls ? ' ' + cls : '');
-    dot.className  = 'conn-dot'    + (state === 'on' ? ' on' : (state === 'going-on' || state === 'going-off') ? ' busy' : '');
-    hint.className = 'hint'        + (state === 'error' ? ' error' : '');
+    const cls = { on: 'on', 'going-on': 'going-on', 'going-off': 'going-off' }[state] || '';
+    tog.className = 'toggle-wrap' + (cls ? ' ' + cls : '');
+    dot.className = 'conn-dot' + (
+      state === 'on' ? ' on' :
+      (state === 'going-on' || state === 'going-off') ? ' busy' : '');
+    hint.className = 'hint' + (state === 'error' ? ' error' : '');
 
     if (state === 'on') {
-      slbl.textContent = 'Подключено';
+      slbl.textContent = 'Подключено' + (serverLabel ? ` · ${serverLabel}` : '');
       slbl.className   = 'status-label on';
       hint.textContent = 'VPN активен. Нажми чтобы отключить.';
+      setTabsDisabled(true);
     } else if (state === 'going-on') {
       slbl.textContent = 'Подключение...';
       slbl.className   = 'status-label busy';
       hint.textContent = msg || '';
+      setTabsDisabled(true);
     } else if (state === 'going-off') {
       slbl.textContent = 'Отключение...';
       slbl.className   = 'status-label busy';
       hint.textContent = '';
+      setTabsDisabled(true);
     } else if (state === 'error') {
       slbl.textContent = 'Ошибка';
       slbl.className   = 'status-label';
       hint.textContent = msg || 'Не удалось подключиться';
+      setTabsDisabled(false);
     } else {
       slbl.textContent = 'Отключено';
       slbl.className   = 'status-label';
       hint.textContent = 'Нажми переключатель\nчтобы подключиться';
+      setTabsDisabled(false);
     }
   }
 
@@ -289,19 +334,31 @@
     setTimeout(() => ui('off'), 3500);
   });
 
+  window.api.onServerChanged((key) => {
+    // Fallback happened — update tab visuals
+    document.getElementById('tab-cf').classList.toggle('active', key === 'cf');
+    document.getElementById('tab-railway').classList.toggle('active', key === 'railway');
+    const note = SERVER_NOTES[key] || '';
+    document.getElementById('srvNote').textContent = note + ' (авто)';
+  });
+
   async function toggle() {
     if (busy) return;
     busy = true;
     try {
       if (on) {
-        ui('going-off');           // ползунок сразу едет влево
+        ui('going-off');
         await window.api.disconnect();
         ui('off');
       } else {
-        ui('going-on');            // ползунок сразу едет вправо
+        ui('going-on');
         const r = await window.api.connect();
         if (r.ok) {
-          ui('on');
+          // Update tab to reflect actual server used
+          const key = r.key || selServer;
+          document.getElementById('tab-cf').classList.toggle('active', key === 'cf');
+          document.getElementById('tab-railway').classList.toggle('active', key === 'railway');
+          ui('on', null, r.server);
         } else {
           ui('error', r.error ? r.error.slice(0, 140) : 'Не удалось подключиться');
           setTimeout(() => ui('off'), 4000);
@@ -311,9 +368,21 @@
     busy = false;
   }
 
+  // Init
   (async () => {
-    const { connected } = await window.api.status();
-    ui(connected ? 'on' : 'off');
+    const info = await window.api.getServers();
+    selServer = info.preferred || 'cf';
+    selectServer(selServer);
+
+    const s = await window.api.status();
+    if (s.connected) {
+      const key = s.serverKey || selServer;
+      document.getElementById('tab-cf').classList.toggle('active', key === 'cf');
+      document.getElementById('tab-railway').classList.toggle('active', key === 'railway');
+      ui('on', null, s.server);
+    } else {
+      ui('off');
+    }
   })();
 </script>
 </body>

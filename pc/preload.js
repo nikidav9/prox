@@ -3,11 +3,14 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
-  connect:    () => ipcRenderer.invoke('connect'),
-  disconnect: () => ipcRenderer.invoke('disconnect'),
-  status:     () => ipcRenderer.invoke('status'),
-  quit:       () => ipcRenderer.invoke('quit'),
-  hide:       () => ipcRenderer.invoke('hide'),
-  onStatus:    (cb) => ipcRenderer.on('status-msg',    (_e, msg) => cb(msg)),
-  onVpnDrop:   (cb) => ipcRenderer.on('auto-disconnect', (_e)    => cb()),
+  getServers:      ()        => ipcRenderer.invoke('get-servers'),
+  setServer:       (key)     => ipcRenderer.invoke('set-server', key),
+  connect:         ()        => ipcRenderer.invoke('connect'),
+  disconnect:      ()        => ipcRenderer.invoke('disconnect'),
+  status:          ()        => ipcRenderer.invoke('status'),
+  quit:            ()        => ipcRenderer.invoke('quit'),
+  hide:            ()        => ipcRenderer.invoke('hide'),
+  onStatus:        (cb) => ipcRenderer.on('status-msg',      (_e, msg) => cb(msg)),
+  onVpnDrop:       (cb) => ipcRenderer.on('auto-disconnect', (_e)      => cb()),
+  onServerChanged: (cb) => ipcRenderer.on('server-changed',  (_e, key) => cb(key)),
 });
