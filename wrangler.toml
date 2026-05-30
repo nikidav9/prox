@@ -5,5 +5,5 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 PROXY_USER = "user"
+VLESS_UUID = "f03e5c9e-16ae-484e-a405-c78695b1142a"
 # Set PROXY_PASS via dashboard: Workers → prox → Settings → Variables
-# (never commit real passwords to git)
