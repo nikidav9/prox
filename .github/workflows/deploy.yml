@@ -66,7 +66,7 @@ jobs:
           curl -s -X POST https://backboard.railway.app/graphql/v2 \
             -H "Authorization: Bearer $RAILWAY_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"query\":\"mutation { variableCollectionUpsert(input: { projectId: \\\"$RAILWAY_PROJECT_ID\\\", environmentId: \\\"$RAILWAY_ENV_ID\\\", serviceId: \\\"$RAILWAY_SERVICE_ID\\\", variables: { SERVER_HOST: \\\"prox-production-e4e0.up.railway.app\\\", EXTERNAL_PORT: \\\"443\\\" } }) }\"}" \
+            -d "{\"query\":\"mutation { variableCollectionUpsert(input: { projectId: \\\"$RAILWAY_PROJECT_ID\\\", environmentId: \\\"$RAILWAY_ENV_ID\\\", serviceId: \\\"$RAILWAY_SERVICE_ID\\\", variables: { SERVER_HOST: \\\"prox-production-e4e0.up.railway.app\\\", EXTERNAL_PORT: \\\"443\\\", XRAY_UUID: \\\"f03e5c9e-16ae-484e-a405-c78695b1142a\\\" } }) }\"}" \
             | jq .
 
       - name: Trigger Railway redeployment

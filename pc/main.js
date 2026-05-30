@@ -10,7 +10,7 @@ const path = require('path');
 
 const PROXY_PORT  = 10809;
 const VLESS_UUID  = 'f03e5c9e-16ae-484e-a405-c78695b1142a';
-const VLESS_HOST  = 'prox.nikidav9.workers.dev';
+const VLESS_HOST  = 'prox-production-e4e0.up.railway.app';
 const VLESS_URL   = `wss://${VLESS_HOST}/vless`;
 // UUID as bytes for VLESS header
 const UUID_BYTES  = Buffer.from(VLESS_UUID.replace(/-/g, ''), 'hex');
