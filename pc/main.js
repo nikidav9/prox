@@ -30,13 +30,6 @@ const SERVERS = {
 };
 
 const REG = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
-const PS_REFRESH = [
-  'powershell -NoProfile -NonInteractive -Command',
-  '"$t=Add-Type -MemberDefinition',
-  "'[DllImport(\\\"wininet.dll\\\")]public static extern bool InternetSetOption(IntPtr h,int o,IntPtr b,int l);'",
-  '-Name W -Namespace W -PassThru;',
-  '$t::InternetSetOption(0,39,0,0);$t::InternetSetOption(0,37,0,0)"',
-].join(' ');
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -46,7 +39,7 @@ let xrayProc     = null;
 let proxyServer  = null;
 let connected    = false;
 let activeServer = null;   // current SERVERS entry
-let preferred    = 'cf';   // user preference
+let preferred    = 'railway'; // user preference
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -366,15 +359,26 @@ async function tryConnect(server) {
 
 // ── Windows system proxy ──────────────────────────────────────────────────────
 
+function refreshIESettings(cb) {
+  const psPath = path.join(os.tmpdir(), 'prox-wininet.ps1');
+  // Write PS1 to a file to avoid all shell quoting issues
+  const psContent =
+    'Add-Type -MemberDefinition \'[DllImport("wininet.dll")]public static extern bool InternetSetOption(IntPtr h,int o,IntPtr b,int l);\' -Name W -Namespace W\n' +
+    '[W]::InternetSetOption(0,39,0,0)\n' +
+    '[W]::InternetSetOption(0,37,0,0)\n';
+  try { fs.writeFileSync(psPath, psContent, 'utf8'); } catch (_) { cb?.(); return; }
+  exec(`powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${psPath}"`, () => cb?.());
+}
+
 function setProxy(enable, cb) {
   if (enable) {
     exec(`reg add "${REG}" /v ProxyEnable /t REG_DWORD /d 1 /f`, () =>
       exec(`reg add "${REG}" /v ProxyServer /t REG_SZ /d "127.0.0.1:${PROXY_PORT}" /f`, () =>
         exec(`reg add "${REG}" /v ProxyOverride /t REG_SZ /d "<local>" /f`, () =>
-          exec(PS_REFRESH, () => cb?.()))));
+          refreshIESettings(cb))));
   } else {
     exec(`reg add "${REG}" /v ProxyEnable /t REG_DWORD /d 0 /f`, () =>
-      exec(PS_REFRESH, () => cb?.()));
+      refreshIESettings(cb));
   }
 }
 

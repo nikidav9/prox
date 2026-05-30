@@ -221,14 +221,14 @@
 
   <!-- Server selector -->
   <div class="server-tabs">
-    <button class="srv-tab active" id="tab-cf" onclick="selectServer('cf')">
+    <button class="srv-tab" id="tab-cf" onclick="selectServer('cf')">
       <span class="dot"></span>Cloudflare
     </button>
-    <button class="srv-tab" id="tab-railway" onclick="selectServer('railway')">
+    <button class="srv-tab active" id="tab-railway" onclick="selectServer('railway')">
       <span class="dot"></span>Railway
     </button>
   </div>
-  <div class="srv-note" id="srvNote">Безлимитный · через Cloudflare</div>
+  <div class="srv-note" id="srvNote">Прямое подключение · Railway</div>
 
   <!-- Toggle -->
   <div class="toggle-wrap" id="toggle" onclick="toggle()">
@@ -299,7 +299,7 @@
     if (state === 'on') {
       slbl.textContent = 'Подключено' + (serverLabel ? ` · ${serverLabel}` : '');
       slbl.className   = 'status-label on';
-      hint.textContent = 'VPN активен. Нажми чтобы отключить.';
+      hint.textContent = 'VPN активен · перезапусти браузер\nНажми чтобы отключить';
       setTabsDisabled(true);
     } else if (state === 'going-on') {
       slbl.textContent = 'Подключение...';
