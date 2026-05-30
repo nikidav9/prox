@@ -11,7 +11,9 @@ const path = require('path');
 const PROXY_PORT  = 10809;
 const VLESS_UUID  = 'f03e5c9e-16ae-484e-a405-c78695b1142a';
 const VLESS_HOST  = 'prox.nikidav9.workers.dev';
-const WS_ENDPOINT = `wss://${VLESS_HOST}/tunnel`;
+const VLESS_URL   = `wss://${VLESS_HOST}/vless`;
+// UUID as bytes for VLESS header
+const UUID_BYTES  = Buffer.from(VLESS_UUID.replace(/-/g, ''), 'hex');
 const REG = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
 const PS_REFRESH = 'powershell -NoProfile -NonInteractive -Command '
   + '"$t=Add-Type -MemberDefinition '
@@ -49,21 +51,50 @@ function testTunnel() {
 function createProxyServer() {
   const WebSocket = require('ws');
 
+  function buildVlessHeader(host, port) {
+    const isIPv4 = /^\d+\.\d+\.\d+\.\d+$/.test(host);
+    const addrType = isIPv4 ? 0x01 : 0x02;
+    const addrBuf  = isIPv4
+      ? Buffer.from(host.split('.').map(Number))
+      : Buffer.concat([Buffer.from([host.length]), Buffer.from(host)]);
+    const portBuf = Buffer.alloc(2);
+    portBuf.writeUInt16BE(port);
+    return Buffer.concat([
+      Buffer.from([0x00]),      // version
+      UUID_BYTES,               // UUID 16 bytes
+      Buffer.from([0x00]),      // addLen = 0
+      Buffer.from([0x01]),      // cmd = TCP
+      portBuf,                  // port BE
+      Buffer.from([addrType]),  // addr type
+      addrBuf,                  // addr
+    ]);
+  }
+
   function openTunnel(socket, host, port, initial) {
     const pending = initial ? [...initial] : [];
     const bufData = (c) => pending.push(c);
     socket.on('data', bufData);
 
-    const ws = new WebSocket(
-      `${WS_ENDPOINT}?token=${VLESS_UUID}&host=${encodeURIComponent(host)}&port=${port}`
-    );
+    const ws = new WebSocket(VLESS_URL);
+    let respStripped = false;
+
     ws.on('open', () => {
       socket.removeListener('data', bufData);
-      for (const c of pending) ws.send(c);
+      const header = buildVlessHeader(host, port);
+      ws.send(pending.length ? Buffer.concat([header, ...pending]) : header);
       pending.length = 0;
       socket.on('data', (c) => { if (ws.readyState === WebSocket.OPEN) ws.send(c); });
     });
-    ws.on('message', (d) => { try { socket.write(d); } catch (_) {} });
+    ws.on('message', (d) => {
+      if (!respStripped) {
+        const buf = Buffer.isBuffer(d) ? d : Buffer.from(d);
+        const skip = 2 + (buf[1] || 0);
+        respStripped = true;
+        if (buf.length > skip) { try { socket.write(buf.slice(skip)); } catch (_) {} }
+        return;
+      }
+      try { socket.write(d); } catch (_) {}
+    });
     ws.on('error',   () => { try { socket.destroy(); } catch (_) {} });
     ws.on('close',   () => { try { socket.destroy(); } catch (_) {} });
     socket.on('error', () => { try { ws.close(); } catch (_) {} });
