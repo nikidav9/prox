@@ -103,7 +103,9 @@ function createProxyServer() {
           const lines  = headerBuf.slice(0, end).toString().split('\r\n');
           let rebuilt  = `${method} ${p} HTTP/1.1\r\n`;
           for (let i = 1; i < lines.length; i++) {
-            if (!lines[i].toLowerCase().startsWith('proxy-')) rebuilt += lines[i] + '\r\n';
+            const lower = lines[i].toLowerCase();
+            if (!lower.startsWith('proxy-') && !lower.startsWith('connection:'))
+              rebuilt += lines[i] + '\r\n';
           }
           rebuilt += 'Connection: close\r\n\r\n';
 
@@ -191,10 +193,13 @@ function stopXray() {
 
 function setProxy(enable, cb) {
   if (enable) {
-    exec(`reg add "${REG}" /v ProxyEnable /t REG_DWORD /d 1 /f`);
-    exec(`reg add "${REG}" /v ProxyServer /t REG_SZ /d "127.0.0.1:${PROXY_PORT}" /f`);
-    exec(`reg add "${REG}" /v ProxyOverride /t REG_SZ /d "<local>" /f`, () => {
-      exec(PS_REFRESH, () => cb && cb());
+    // Chain sequentially so all values are written before PS_REFRESH
+    exec(`reg add "${REG}" /v ProxyEnable /t REG_DWORD /d 1 /f`, () => {
+      exec(`reg add "${REG}" /v ProxyServer /t REG_SZ /d "127.0.0.1:${PROXY_PORT}" /f`, () => {
+        exec(`reg add "${REG}" /v ProxyOverride /t REG_SZ /d "<local>" /f`, () => {
+          exec(PS_REFRESH, () => cb && cb());
+        });
+      });
     });
   } else {
     exec(`reg add "${REG}" /v ProxyEnable /t REG_DWORD /d 0 /f`, () => {
@@ -209,6 +214,9 @@ ipcMain.handle('connect', async () => {
   if (connected) return { ok: true };
   const notify = (msg) => win && win.webContents.send('status-msg', msg);
 
+  // Clear any stale proxy from a previous crashed/dirty session before we start
+  await new Promise(r => setProxy(false, r));
+
   // Helper: start a proxy engine, test it, return true if working
   async function tryEngine(label, startFn, stopFn) {
     try {
@@ -219,7 +227,7 @@ ipcMain.handle('connect', async () => {
       if (ok) return true;
       notify('Туннель не отвечает, пробую другой способ...');
       stopFn();
-      await new Promise(r => setTimeout(r, 600));
+      await new Promise(r => setTimeout(r, 800));
       return false;
     } catch (_) {
       stopFn();
@@ -336,7 +344,11 @@ function createWindow() {
   win.on('close', (e) => { e.preventDefault(); win.hide(); });
 }
 
-app.whenReady().then(() => { createTray(); createWindow(); });
+app.whenReady().then(() => {
+  setProxy(false);  // clear any stale proxy left from a previous session
+  createTray();
+  createWindow();
+});
 app.on('before-quit', () => {
   if (win) win.removeAllListeners('close');
   setProxy(false);

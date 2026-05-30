@@ -124,8 +124,9 @@
     margin-bottom: 14px;
     flex-shrink: 0;
   }
-  .toggle-wrap.on   { background: #7b68ee; }
-  .toggle-wrap.busy { cursor: default; opacity: 0.6; }
+  .toggle-wrap.on       { background: #7b68ee; }
+  .toggle-wrap.going-on { background: #7b68ee; opacity: 0.6; cursor: default; }
+  .toggle-wrap.going-off                      { opacity: 0.6; cursor: default; }
   .toggle-knob {
     width: 60px; height: 60px;
     border-radius: 50%;
@@ -135,7 +136,8 @@
     top: 8px; left: 8px;
     transition: left .32s cubic-bezier(.34,1.5,.64,1);
   }
-  .toggle-wrap.on .toggle-knob { left: calc(100% - 68px); }
+  .toggle-wrap.on .toggle-knob,
+  .toggle-wrap.going-on .toggle-knob { left: calc(100% - 68px); }
 
   /* ── Hint ── */
   .hint {
@@ -249,18 +251,23 @@
     const hint = document.getElementById('hint');
     const dot  = document.getElementById('connDot');
 
-    tog.className  = 'toggle-wrap' + (on ? ' on' : state === 'busy' ? ' busy' : '');
-    dot.className  = 'conn-dot'    + (on ? ' on' : state === 'busy' ? ' busy' : '');
+    const cls = { 'on': 'on', 'going-on': 'going-on', 'going-off': 'going-off' }[state] || '';
+    tog.className  = 'toggle-wrap' + (cls ? ' ' + cls : '');
+    dot.className  = 'conn-dot'    + (state === 'on' ? ' on' : (state === 'going-on' || state === 'going-off') ? ' busy' : '');
     hint.className = 'hint'        + (state === 'error' ? ' error' : '');
 
     if (state === 'on') {
       slbl.textContent = 'Подключено';
       slbl.className   = 'status-label on';
       hint.textContent = 'VPN активен. Нажми чтобы отключить.';
-    } else if (state === 'busy') {
-      slbl.textContent = 'Подождите...';
+    } else if (state === 'going-on') {
+      slbl.textContent = 'Подключение...';
       slbl.className   = 'status-label busy';
       hint.textContent = msg || '';
+    } else if (state === 'going-off') {
+      slbl.textContent = 'Отключение...';
+      slbl.className   = 'status-label busy';
+      hint.textContent = '';
     } else if (state === 'error') {
       slbl.textContent = 'Ошибка';
       slbl.className   = 'status-label';
@@ -279,12 +286,13 @@
   async function toggle() {
     if (busy) return;
     busy = true;
-    ui('busy');
     try {
       if (on) {
+        ui('going-off');           // ползунок сразу едет влево
         await window.api.disconnect();
         ui('off');
       } else {
+        ui('going-on');            // ползунок сразу едет вправо
         const r = await window.api.connect();
         if (r.ok) {
           ui('on');
