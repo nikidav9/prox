@@ -3,7 +3,6 @@
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } = require('electron');
 const { exec, spawn } = require('child_process');
 const net  = require('net');
-const tls  = require('tls');
 const fs   = require('fs');
 const os   = require('os');
 const path = require('path');
@@ -26,7 +25,8 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) { app.quit(); }
 else { app.on('second-instance', () => { if (win) { win.show(); win.focus(); } }); }
 
-// ── Tunnel test: CONNECT + TLS handshake — same path as browser HTTPS ────────
+// ── Tunnel test: CONNECT then plain HTTP GET through tunnel ───────────────────
+// Tests the full CONNECT path (which browsers use for HTTPS) without needing TLS.
 
 function testTunnel() {
   return new Promise((resolve) => {
@@ -40,29 +40,28 @@ function testTunnel() {
       }
     };
 
+    let stage = 0; // 0 = waiting for proxy 200, 1 = waiting for remote response
+    let buf = '';
+
     sock.setTimeout(18000, () => done(false));
     sock.on('error', () => done(false));
     sock.on('connect', () => {
-      sock.write('CONNECT cp.cloudflare.com:443 HTTP/1.1\r\nHost: cp.cloudflare.com:443\r\n\r\n');
+      sock.write('CONNECT cp.cloudflare.com:80 HTTP/1.1\r\nHost: cp.cloudflare.com:80\r\n\r\n');
     });
-
-    let hdr = '';
-    const onData = (chunk) => {
-      hdr += chunk.toString();
-      if (!hdr.includes('\r\n\r\n')) return;
-      sock.removeListener('data', onData);
-      if (!hdr.startsWith('HTTP/1.1 200')) { done(false); return; }
-      // CONNECT established — now do TLS to verify the full tunnel works
-      const tlsSock = tls.connect({
-        socket: sock,
-        servername: 'cp.cloudflare.com',
-        rejectUnauthorized: false,
-      });
-      tlsSock.setTimeout(12000, () => done(false));
-      tlsSock.on('secureConnect', () => done(true));
-      tlsSock.on('error', () => done(false));
-    };
-    sock.on('data', onData);
+    sock.on('data', (chunk) => {
+      buf += chunk.toString();
+      if (stage === 0) {
+        if (!buf.includes('\r\n\r\n')) return;
+        if (!buf.startsWith('HTTP/1.1 200')) { done(false); return; }
+        // Proxy accepted CONNECT — send plain HTTP GET through the tunnel
+        stage = 1;
+        buf = '';
+        sock.write('GET / HTTP/1.0\r\nHost: cp.cloudflare.com\r\n\r\n');
+      } else {
+        // Any response from the remote server means the tunnel works end-to-end
+        if (buf.length > 4) done(true);
+      }
+    });
   });
 }
 
