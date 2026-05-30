@@ -13,6 +13,7 @@ const path = require('path');
 const PROXY_PORT = 10809;
 const VLESS_UUID = 'f03e5c9e-16ae-484e-a405-c78695b1142a';
 const UUID_BYTES = Buffer.from(VLESS_UUID.replace(/-/g, ''), 'hex');
+const XRAY_ZIP_URL = 'https://github.com/XTLS/Xray-core/releases/latest/download/Xray-windows-64.zip';
 
 const SERVERS = {
   cf: {
@@ -45,6 +46,64 @@ let preferred    = 'railway'; // user preference
 
 const delay = (ms) => new Promise(r => setTimeout(r, ms));
 const notify = (msg) => { try { win?.webContents.send('status-msg', msg); } catch (_) {} };
+
+// ── Xray auto-download ────────────────────────────────────────────────────────
+
+function downloadFile(url, dest, redirects = 0) {
+  return new Promise((resolve, reject) => {
+    if (redirects > 8) { reject(new Error('Too many redirects')); return; }
+    const mod = url.startsWith('https:') ? require('https') : require('http');
+    const file = fs.createWriteStream(dest);
+    const req = mod.get(url, { timeout: 120000 }, (res) => {
+      const loc = res.headers.location;
+      if ((res.statusCode === 301 || res.statusCode === 302 ||
+           res.statusCode === 307 || res.statusCode === 308) && loc) {
+        file.destroy(); fs.unlink(dest, () => {});
+        return downloadFile(loc, dest, redirects + 1).then(resolve, reject);
+      }
+      if (res.statusCode !== 200) {
+        file.destroy(); reject(new Error(`HTTP ${res.statusCode}`)); return;
+      }
+      res.pipe(file);
+      file.on('finish', () => file.close(resolve));
+      file.on('error', reject);
+    });
+    req.on('error', (e) => { file.destroy(); fs.unlink(dest, () => {}); reject(e); });
+    req.on('timeout', () => { req.destroy(); reject(new Error('Download timeout')); });
+  });
+}
+
+async function ensureXray() {
+  const found = findXray();
+  if (found) return found;
+
+  const userData  = app.getPath('userData');
+  const xrayDest  = path.join(userData, 'xray.exe');
+  const zipPath   = path.join(userData, 'xray-dl.zip');
+  const extractTo = path.join(userData, 'xray-tmp');
+
+  try {
+    notify('Загрузка Xray (~15 МБ, первый раз)...');
+    await downloadFile(XRAY_ZIP_URL, zipPath);
+
+    notify('Распаковка...');
+    try { fs.mkdirSync(extractTo, { recursive: true }); } catch (_) {}
+    await new Promise((res, rej) => {
+      exec(
+        `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Expand-Archive -LiteralPath '${zipPath}' -DestinationPath '${extractTo}' -Force"`,
+        { timeout: 30000 }, (e) => e ? rej(e) : res()
+      );
+    });
+
+    const srcExe = path.join(extractTo, 'xray.exe');
+    if (!fs.existsSync(srcExe)) throw new Error('xray.exe не найден в архиве');
+    fs.renameSync(srcExe, xrayDest);
+    return xrayDest;
+  } finally {
+    try { fs.unlinkSync(zipPath); } catch (_) {}
+    try { fs.rmSync(extractTo, { recursive: true, force: true }); } catch (_) {}
+  }
+}
 
 // ── VLESS header ──────────────────────────────────────────────────────────────
 
@@ -207,6 +266,7 @@ function makeXrayConfig(server) {
         wsSettings:  { path: '/vless', headers: { Host: server.host } },
         tlsSettings: { serverName: server.host, allowInsecure: false },
       },
+      mux: { enabled: true, concurrency: 8 },
     }],
   };
 }
@@ -322,8 +382,14 @@ function testTunnel() {
 async function tryConnect(server) {
   activeServer = server;
 
-  // 1. Xray
-  const xrayPath = findXray();
+  // 1. Xray (auto-download if not present)
+  let xrayPath = null;
+  try {
+    xrayPath = await ensureXray();
+  } catch (e) {
+    notify(`Xray недоступен: ${e.message.slice(0, 80)}`);
+  }
+
   if (xrayPath) {
     try {
       notify(`${server.label}: запуск Xray...`);
@@ -341,9 +407,9 @@ async function tryConnect(server) {
     await delay(400);
   }
 
-  // 2. Built-in WS proxy
+  // 2. Built-in WS proxy (fallback — slow but functional)
   try {
-    notify(`${server.label}: встроенный прокси...`);
+    notify(`${server.label}: встроенный прокси (медленный режим)...`);
     await startWSProxy();
     notify(`${server.label}: проверка туннеля...`);
     if (await testTunnel()) return true;
@@ -374,11 +440,16 @@ function setProxy(enable, cb) {
   if (enable) {
     exec(`reg add "${REG}" /v ProxyEnable /t REG_DWORD /d 1 /f`, () =>
       exec(`reg add "${REG}" /v ProxyServer /t REG_SZ /d "127.0.0.1:${PROXY_PORT}" /f`, () =>
-        exec(`reg add "${REG}" /v ProxyOverride /t REG_SZ /d "<local>" /f`, () =>
-          refreshIESettings(cb))));
+        exec(`reg add "${REG}" /v ProxyOverride /t REG_SZ /d "<local>" /f`, () => {
+          // WinHTTP proxy (used by some Chrome builds and system services)
+          exec(`netsh winhttp set proxy 127.0.0.1:${PROXY_PORT} "<local>"`, () => {});
+          refreshIESettings(cb);
+        })));
   } else {
-    exec(`reg add "${REG}" /v ProxyEnable /t REG_DWORD /d 0 /f`, () =>
-      refreshIESettings(cb));
+    exec(`reg add "${REG}" /v ProxyEnable /t REG_DWORD /d 0 /f`, () => {
+      exec('netsh winhttp reset proxy', () => {});
+      refreshIESettings(cb);
+    });
   }
 }
 
