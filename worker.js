@@ -240,8 +240,12 @@ function makeMobileconfig(host, user, pass) {
 
 function makeUI(host, user, pass, vlessUuid) {
   const base = `https://${host}`;
-  const vlessUrl = vlessUuid
+  const RAILWAY_HOST = 'prox-production-e4e0.up.railway.app';
+  const vlessCF = vlessUuid
     ? `vless://${vlessUuid}@${host}:443?encryption=none&security=tls&type=ws&path=%2Fvless&host=${host}#prox-cf`
+    : '';
+  const vlessRailway = vlessUuid
+    ? `vless://${vlessUuid}@${RAILWAY_HOST}:443?encryption=none&security=tls&type=ws&path=%2Fvless&host=${RAILWAY_HOST}#prox-railway`
     : '';
 
   return `<!DOCTYPE html>
@@ -255,7 +259,11 @@ body{font-family:-apple-system,system-ui,sans-serif;background:#f2f2f7;color:#1c
 h1{font-size:28px;font-weight:700;margin-bottom:6px}
 .sub{font-size:15px;color:#8e8e93;margin-bottom:24px}
 .c{background:white;border-radius:16px;padding:20px;margin-bottom:16px}
-.c h2{font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:#8e8e93;margin-bottom:12px}
+.c h2{font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:#8e8e93;margin-bottom:4px}
+.c .h2sub{font-size:12px;color:#8e8e93;margin-bottom:12px}
+.badge{display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;margin-left:6px;vertical-align:middle}
+.badge.green{background:#d1f5db;color:#1a7f37}
+.badge.orange{background:#fff3cd;color:#856404}
 .r{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f2f2f7}
 .r:last-child{border-bottom:none}
 .l{color:#8e8e93;font-size:15px}.v{font-family:monospace;font-size:13px;font-weight:500;word-break:break-all;text-align:right;max-width:65%}
@@ -274,21 +282,31 @@ li::before{content:counter(s);position:absolute;left:0;top:8px;background:#34C75
 </style></head><body>
 <div class="w">
 <h1>prox</h1>
-<p class="sub">Обход блокировок — Cloudflare, бесплатно</p>
+<p class="sub">Обход блокировок</p>
 
-${vlessUrl ? `
+${vlessRailway ? `
 <div class="c">
-  <h2>VPN через V2Box</h2>
+  <h2>Railway <span class="badge green">Быстрый · ~100 мс</span></h2>
+  <p class="h2sub">Прямое подключение — минимальный пинг</p>
   <ol>
     <li>Скачай <b>V2Box</b> из App Store — бесплатно</li>
     <li>Нажми кнопку ниже — ссылка скопируется</li>
     <li>Открой V2Box → <b>+</b> → <b>Import from clipboard</b></li>
-    <li>Появится «prox-cf» → нажми <b>Connect</b></li>
+    <li>Появится «prox-railway» → нажми <b>Connect</b></li>
     <li>Разреши VPN — готово</li>
   </ol>
-  <div class="link" id="vl">${vlessUrl}</div>
-  <button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('vl').innerText).then(()=>{this.textContent='Скопировано ✓';setTimeout(()=>this.textContent='Скопировать ссылку',2000)})">Скопировать ссылку</button>
-  <p class="note">Трафик идёт через Cloudflare → Railway. Wi-Fi и мобильная сеть.</p>
+  <div class="link" id="vr">${vlessRailway}</div>
+  <button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('vr').innerText).then(()=>{this.textContent='Скопировано ✓';setTimeout(()=>this.textContent='Скопировать Railway',2000)})">Скопировать Railway</button>
+  <p class="note">Используй этот если нет блокировок Railway в твоей сети.</p>
+</div>` : ''}
+
+${vlessCF ? `
+<div class="c">
+  <h2>Cloudflare <span class="badge orange">Резерв · ~1000 мс</span></h2>
+  <p class="h2sub">Через Cloudflare — если Railway заблокирован</p>
+  <div class="link" id="vl">${vlessCF}</div>
+  <button class="btn" style="background:#8e8e93" onclick="navigator.clipboard.writeText(document.getElementById('vl').innerText).then(()=>{this.textContent='Скопировано ✓';setTimeout(()=>this.textContent='Скопировать Cloudflare',2000)})">Скопировать Cloudflare</button>
+  <p class="note">Трафик идёт через Cloudflare → Railway. Выше пинг, но работает всегда.</p>
 </div>` : `<div class="c"><p style="color:#8e8e93">Загрузка...</p></div>`}
 
 <div class="c">
@@ -299,7 +317,8 @@ ${vlessUrl ? `
 
 <div class="c">
   <h2>Параметры (для ручной настройки)</h2>
-  <div class="r"><span class="l">Адрес</span><span class="v">${host}</span></div>
+  <div class="r"><span class="l">Railway host</span><span class="v">${RAILWAY_HOST}</span></div>
+  <div class="r"><span class="l">CF host</span><span class="v">${host}</span></div>
   ${vlessUuid ? `<div class="r"><span class="l">UUID</span><span class="v">${vlessUuid}</span></div>` : ''}
   <div class="r"><span class="l">Протокол</span><span class="v">VLESS+WS+TLS</span></div>
   <div class="r"><span class="l">Путь</span><span class="v">/vless</span></div>
