@@ -1,285 +1,143 @@
 /**
- * Cloudflare Worker — VLESS/WebSocket proxy + DNS-over-HTTPS + iOS profiles
+ * Cloudflare Worker — VLESS relay + DNS-over-HTTPS + iOS profiles
+ * /vless  → transparent WebSocket relay to Railway (no cloudflare:sockets)
  */
-import { connect } from 'cloudflare:sockets';
 
 const REALM = 'prox';
+const RAILWAY_WS = 'wss://prox-production-e4e0.up.railway.app/vless';
 
 export default {
   async fetch(request, env) {
-    const PROXY_USER = env.PROXY_USER || 'user';
-    const PROXY_PASS = env.PROXY_PASS || 'changeme';
-    const VLESS_UUID = env.VLESS_UUID || '';
-    const url = new URL(request.url);
-    const host = request.headers.get('host') || url.host;
-
-    // ── VLESS over WebSocket ──────────────────────────────────────────────────
-    if (url.pathname === '/vless') {
-      if (!VLESS_UUID) return new Response('Not configured', { status: 503 });
-      if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
-        return new Response('WebSocket required', { status: 400 });
-      }
-      return handleVless(request, VLESS_UUID);
+    try {
+      return await handleRequest(request, env);
+    } catch (e) {
+      return new Response('Worker error: ' + e.message + '\n' + (e.stack || ''), { status: 500 });
     }
-
-    // ── Desktop tunnel (WebSocket proxy for PC app) ──────────────────────────
-    if (url.pathname === '/tunnel') {
-      if (!VLESS_UUID) return new Response('Not configured', { status: 503 });
-      const token = url.searchParams.get('token') || '';
-      if (token !== VLESS_UUID) return new Response('Unauthorized', { status: 401 });
-      const tHost = url.searchParams.get('host');
-      const tPort = parseInt(url.searchParams.get('port') || '443', 10);
-      if (!tHost) return new Response('Missing host', { status: 400 });
-      if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
-        return new Response('WebSocket required', { status: 400 });
-      }
-      return handleTunnel(request, tHost, tPort);
-    }
-
-    // ── DNS-over-HTTPS (GET and POST) ─────────────────────────────────────────
-    if (url.pathname === '/dns-query') {
-      const target = new URL('https://dns.google/dns-query');
-      url.searchParams.forEach((v, k) => target.searchParams.set(k, v));
-      const up = await fetch(target.toString(), {
-        method: request.method,
-        headers: {
-          'accept': request.headers.get('accept') || 'application/dns-message',
-          ...(request.headers.get('content-type')
-            ? { 'content-type': request.headers.get('content-type') } : {}),
-        },
-        body: request.body || undefined,
-      });
-      return new Response(up.body, {
-        status: up.status,
-        headers: {
-          'content-type': up.headers.get('content-type') || 'application/dns-message',
-          'cache-control': 'max-age=300',
-          'access-control-allow-origin': '*',
-        },
-      });
-    }
-
-    // ── Management routes (no auth) ───────────────────────────────────────────
-    if (request.method === 'GET' || request.method === 'HEAD') {
-      if (url.pathname === '/pac') {
-        return new Response(makePAC(host), {
-          headers: { 'content-type': 'application/x-ns-proxy-autoconfig' },
-        });
-      }
-      if (url.pathname === '/dns.mobileconfig') {
-        return new Response(new TextEncoder().encode(makeDNSMobileconfig(host)).buffer, {
-          headers: {
-            'Content-Type': 'application/x-apple-aspen-config',
-            'Content-Disposition': 'attachment; filename="dns-prox.mobileconfig"',
-            'Cache-Control': 'no-store',
-          },
-        });
-      }
-      if (url.pathname === '/profile.mobileconfig') {
-        return new Response(new TextEncoder().encode(makeMobileconfig(host, PROXY_USER, PROXY_PASS)).buffer, {
-          headers: {
-            'Content-Type': 'application/x-apple-aspen-config',
-            'Content-Disposition': 'attachment; filename="prox.mobileconfig"',
-            'Cache-Control': 'no-store',
-          },
-        });
-      }
-      if (url.pathname === '/' || url.pathname === '') {
-        return new Response(makeUI(host, PROXY_USER, PROXY_PASS, VLESS_UUID), {
-          headers: { 'content-type': 'text/html;charset=utf-8' },
-        });
-      }
-    }
-
-    // ── Proxy auth ────────────────────────────────────────────────────────────
-    if (!checkAuth(request.headers.get('proxy-authorization'), PROXY_USER, PROXY_PASS)) {
-      return new Response('Proxy Authentication Required', {
-        status: 407,
-        headers: { 'proxy-authenticate': `Basic realm="${REALM}"` },
-      });
-    }
-
-    // ── HTTPS CONNECT ─────────────────────────────────────────────────────────
-    if (request.method === 'CONNECT') {
-      const [targetHost, targetPort] = request.url.split(':');
-      const port = parseInt(targetPort || '443', 10);
-      try {
-        const socket = connect({ hostname: targetHost, port });
-        if (request.body) request.body.pipeTo(socket.writable).catch(() => {});
-        return new Response(socket.readable, {
-          status: 200,
-          statusText: 'Connection Established',
-        });
-      } catch (err) {
-        return new Response('Tunnel failed: ' + err.message, { status: 502 });
-      }
-    }
-
-    // ── Plain HTTP proxy ──────────────────────────────────────────────────────
-    if (request.url.startsWith('http://') || request.url.startsWith('https://')) {
-      const headers = new Headers(request.headers);
-      headers.delete('proxy-authorization');
-      headers.delete('proxy-connection');
-      try {
-        return await fetch(request.url, {
-          method: request.method,
-          headers,
-          body: ['GET', 'HEAD'].includes(request.method) ? undefined : request.body,
-          redirect: 'follow',
-        });
-      } catch (err) {
-        return new Response('Upstream error: ' + err.message, { status: 502 });
-      }
-    }
-
-    return new Response('Bad Request', { status: 400 });
-  },
+  }
 };
 
-// ── VLESS handler ─────────────────────────────────────────────────────────────
+async function handleRequest(request, env) {
+  const PROXY_USER = env.PROXY_USER || 'user';
+  const PROXY_PASS = env.PROXY_PASS || 'changeme';
+  const VLESS_UUID = env.VLESS_UUID || '';
+  const url = new URL(request.url);
+  const host = request.headers.get('host') || url.host;
 
-async function handleVless(request, uuid) {
-  const { 0: client, 1: server } = new WebSocketPair();
-  server.accept();
-  processVless(server, uuid).catch(() => { try { server.close(1011, 'err'); } catch (_) {} });
-  return new Response(null, { status: 101, webSocket: client });
-}
-
-async function processVless(ws, uuid) {
-  const q = new MsgQueue();
-  ws.addEventListener('message', ({ data }) => {
-    q.push(data instanceof ArrayBuffer ? new Uint8Array(data)
-         : typeof data === 'string'    ? new TextEncoder().encode(data)
-         : data);
-  });
-  ws.addEventListener('close', () => q.done());
-  ws.addEventListener('error', () => q.done());
-
-  // Accumulate bytes until header is complete
-  let buf = new Uint8Array(0);
-  const grow = (chunk) => { const n = new Uint8Array(buf.length + chunk.length); n.set(buf); n.set(chunk, buf.length); buf = n; };
-  const fill = async (need) => { while (buf.length < need) { const c = await q.next(); if (!c) throw new Error('closed'); grow(c); } };
-
-  await fill(18); // version(1) + uuid(16) + addLen(1)
-  let i = 1; // skip version
-
-  // Verify UUID
-  const exp = hexToBytes(uuid.replace(/-/g, ''));
-  for (let j = 0; j < 16; j++) if (buf[i + j] !== exp[j]) { ws.close(1003, 'auth'); return; }
-  i += 16;
-
-  const addLen = buf[i++];
-  await fill(i + addLen + 4); // skip addinfo + cmd(1) + port(2) + addrType(1)
-  i += addLen;
-
-  const cmd = buf[i++];
-  if (cmd !== 1) { ws.close(1003, 'udp'); return; }
-
-  const port = (buf[i] << 8) | buf[i + 1]; i += 2;
-  const addrType = buf[i++];
-
-  let host;
-  if (addrType === 1) {
-    await fill(i + 4);
-    host = Array.from(buf.slice(i, i + 4)).join('.'); i += 4;
-  } else if (addrType === 2) {
-    await fill(i + 1);
-    const dl = buf[i++];
-    await fill(i + dl);
-    host = new TextDecoder().decode(buf.slice(i, i + dl)); i += dl;
-  } else if (addrType === 3) {
-    await fill(i + 16);
-    host = '[' + [...Array(8)].map((_, j) => ((buf[i+j*2]<<8)|buf[i+j*2+1]).toString(16)).join(':') + ']';
-    i += 16;
-  } else { ws.close(1003, 'addr'); return; }
-
-  let remote;
-  try { remote = connect({ hostname: host, port }); }
-  catch { ws.close(1011, 'connect'); return; }
-
-  // VLESS response: version=0, addLen=0
-  ws.send(new Uint8Array([0, 0]));
-
-  const leftover = buf.slice(i);
-
-  // WS → Remote
-  const toRemote = (async () => {
-    const w = remote.writable.getWriter();
-    try {
-      if (leftover.length) await w.write(leftover);
-      while (true) { const c = await q.next(); if (!c) break; await w.write(c); }
-    } catch (_) {}
-    try { w.close(); } catch (_) {}
-  })();
-
-  // Remote → WS
-  const toWS = (async () => {
-    const r = remote.readable.getReader();
-    try { while (true) { const { done, value } = await r.read(); if (done) break; ws.send(value); } }
-    catch (_) {}
-    try { ws.close(); } catch (_) {}
-  })();
-
-  await Promise.allSettled([toRemote, toWS]);
-}
-
-// ── Desktop tunnel handler ────────────────────────────────────────────────────
-
-async function handleTunnel(request, host, port) {
-  const { 0: client, 1: server } = new WebSocketPair();
-  server.accept();
-  processTunnel(server, host, port).catch(() => { try { server.close(1011, 'err'); } catch (_) {} });
-  return new Response(null, { status: 101, webSocket: client });
-}
-
-async function processTunnel(ws, host, port) {
-  // Connect to target immediately — no JSON round-trip needed
-  let remote;
-  try { remote = connect({ hostname: host, port }); }
-  catch (e) { ws.close(1011, 'connect failed'); return; }
-
-  const q = new MsgQueue();
-  ws.addEventListener('message', ({ data }) => {
-    q.push(data instanceof ArrayBuffer ? new Uint8Array(data)
-         : typeof data === 'string'    ? new TextEncoder().encode(data)
-         : data);
-  });
-  ws.addEventListener('close', () => q.done());
-  ws.addEventListener('error', () => q.done());
-
-  const toRemote = (async () => {
-    const w = remote.writable.getWriter();
-    try {
-      while (true) { const c = await q.next(); if (!c) break; await w.write(c); }
-    } catch (_) {}
-    try { w.close(); } catch (_) {}
-  })();
-
-  const toWS = (async () => {
-    const r = remote.readable.getReader();
-    try { while (true) { const { done, value } = await r.read(); if (done) break; ws.send(value); } }
-    catch (_) {}
-    try { ws.close(); } catch (_) {}
-  })();
-
-  await Promise.allSettled([toRemote, toWS]);
-}
-
-class MsgQueue {
-  constructor() { this.q = []; this.r = null; this.end = false; }
-  push(v) { this.r ? (this.r(v), this.r = null) : this.q.push(v); }
-  done() { this.end = true; this.r && (this.r(null), this.r = null); }
-  next() {
-    if (this.q.length) return Promise.resolve(this.q.shift());
-    if (this.end) return Promise.resolve(null);
-    return new Promise(r => { this.r = r; });
+  // ── VLESS over WebSocket — relay to Railway ──────────────────────────────
+  if (url.pathname === '/vless') {
+    if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
+      return new Response('WebSocket required', { status: 400 });
+    }
+    return handleVlessRelay(request);
   }
+
+  // ── DNS-over-HTTPS (GET and POST) ─────────────────────────────────────────
+  if (url.pathname === '/dns-query') {
+    const target = new URL('https://dns.google/dns-query');
+    url.searchParams.forEach((v, k) => target.searchParams.set(k, v));
+    const up = await fetch(target.toString(), {
+      method: request.method,
+      headers: {
+        'accept': request.headers.get('accept') || 'application/dns-message',
+        ...(request.headers.get('content-type')
+          ? { 'content-type': request.headers.get('content-type') } : {}),
+      },
+      body: request.body || undefined,
+    });
+    return new Response(up.body, {
+      status: up.status,
+      headers: {
+        'content-type': up.headers.get('content-type') || 'application/dns-message',
+        'cache-control': 'max-age=300',
+        'access-control-allow-origin': '*',
+      },
+    });
+  }
+
+  // ── Management routes ─────────────────────────────────────────────────────
+  if (request.method === 'GET' || request.method === 'HEAD') {
+    if (url.pathname === '/pac') {
+      return new Response(makePAC(host), {
+        headers: { 'content-type': 'application/x-ns-proxy-autoconfig' },
+      });
+    }
+    if (url.pathname === '/dns.mobileconfig') {
+      return new Response(new TextEncoder().encode(makeDNSMobileconfig(host)).buffer, {
+        headers: {
+          'Content-Type': 'application/x-apple-aspen-config',
+          'Content-Disposition': 'attachment; filename="dns-prox.mobileconfig"',
+          'Cache-Control': 'no-store',
+        },
+      });
+    }
+    if (url.pathname === '/profile.mobileconfig') {
+      return new Response(new TextEncoder().encode(makeMobileconfig(host, PROXY_USER, PROXY_PASS)).buffer, {
+        headers: {
+          'Content-Type': 'application/x-apple-aspen-config',
+          'Content-Disposition': 'attachment; filename="prox.mobileconfig"',
+          'Cache-Control': 'no-store',
+        },
+      });
+    }
+    if (url.pathname === '/' || url.pathname === '') {
+      return new Response(makeUI(host, PROXY_USER, PROXY_PASS, VLESS_UUID), {
+        headers: { 'content-type': 'text/html;charset=utf-8' },
+      });
+    }
+  }
+
+  return new Response('Not Found', { status: 404 });
 }
 
-function hexToBytes(hex) {
-  const b = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < b.length; i++) b[i] = parseInt(hex.slice(i*2, i*2+2), 16);
-  return b;
+// ── VLESS WebSocket relay ─────────────────────────────────────────────────────
+// Accepts WS from client, opens WS to Railway, bridges all messages.
+
+async function handleVlessRelay(request) {
+  const { 0: client, 1: server } = new WebSocketPair();
+  server.accept();
+
+  // Open upstream WS to Railway
+  const upstreamResp = await fetch(RAILWAY_WS, {
+    headers: {
+      'Upgrade': 'websocket',
+      'Connection': 'Upgrade',
+      'Sec-WebSocket-Version': '13',
+      'Sec-WebSocket-Key': btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16)))),
+      'Host': 'prox-production-e4e0.up.railway.app',
+    },
+  });
+
+  if (upstreamResp.status !== 101 || !upstreamResp.webSocket) {
+    server.close(1011, 'upstream unavailable');
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  const upstream = upstreamResp.webSocket;
+  upstream.accept();
+
+  // client → Railway
+  server.addEventListener('message', ({ data }) => {
+    try { upstream.send(data); } catch (_) {}
+  });
+  server.addEventListener('close', ({ code, reason }) => {
+    try { upstream.close(code || 1000, reason || ''); } catch (_) {}
+  });
+  server.addEventListener('error', () => {
+    try { upstream.close(1011, 'client error'); } catch (_) {}
+  });
+
+  // Railway → client
+  upstream.addEventListener('message', ({ data }) => {
+    try { server.send(data); } catch (_) {}
+  });
+  upstream.addEventListener('close', ({ code, reason }) => {
+    try { server.close(code || 1000, reason || ''); } catch (_) {}
+  });
+  upstream.addEventListener('error', () => {
+    try { server.close(1011, 'upstream error'); } catch (_) {}
+  });
+
+  return new Response(null, { status: 101, webSocket: client });
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
@@ -379,7 +237,7 @@ function makeMobileconfig(host, user, pass) {
 function makeUI(host, user, pass, vlessUuid) {
   const base = `https://${host}`;
   const vlessUrl = vlessUuid
-    ? `vless://${vlessUuid}@${host}:443?encryption=none&security=tls&type=ws&path=%2Fvless&host=${host}#prox`
+    ? `vless://${vlessUuid}@${host}:443?encryption=none&security=tls&type=ws&path=%2Fvless&host=${host}#prox-cf`
     : '';
 
   return `<!DOCTYPE html>
@@ -421,12 +279,12 @@ ${vlessUrl ? `
     <li>Скачай <b>V2Box</b> из App Store — бесплатно</li>
     <li>Нажми кнопку ниже — ссылка скопируется</li>
     <li>Открой V2Box → <b>+</b> → <b>Import from clipboard</b></li>
-    <li>Появится «prox» → нажми <b>Connect</b></li>
+    <li>Появится «prox-cf» → нажми <b>Connect</b></li>
     <li>Разреши VPN — готово</li>
   </ol>
   <div class="link" id="vl">${vlessUrl}</div>
   <button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('vl').innerText).then(()=>{this.textContent='Скопировано ✓';setTimeout(()=>this.textContent='Скопировать ссылку',2000)})">Скопировать ссылку</button>
-  <p class="note">Весь трафик через Cloudflare. Wi-Fi и мобильная сеть.</p>
+  <p class="note">Трафик идёт через Cloudflare → Railway. Wi-Fi и мобильная сеть.</p>
 </div>` : `<div class="c"><p style="color:#8e8e93">Загрузка...</p></div>`}
 
 <div class="c">
