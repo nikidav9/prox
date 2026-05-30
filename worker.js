@@ -1,10 +1,12 @@
 /**
- * Cloudflare Worker — VLESS relay + DNS-over-HTTPS + iOS profiles
- * /vless  → transparent WebSocket relay to Railway (no cloudflare:sockets)
+ * Cloudflare Worker — VLESS server using cloudflare:sockets
+ * /vless → direct TCP proxy via CF edge (no Railway relay)
+ * Railway remains available as a separate server via its own VLESS link
  */
 
-const REALM = 'prox';
-const RAILWAY_WS = 'wss://prox-production-e4e0.up.railway.app/vless';
+import { connect } from 'cloudflare:sockets';
+
+const RAILWAY_HOST = 'prox-production-e4e0.up.railway.app';
 
 export default {
   async fetch(request, env) {
@@ -17,21 +19,21 @@ export default {
 };
 
 async function handleRequest(request, env) {
-  const PROXY_USER = env.PROXY_USER || 'user';
-  const PROXY_PASS = env.PROXY_PASS || 'changeme';
-  const VLESS_UUID = env.VLESS_UUID || '';
-  const url = new URL(request.url);
+  const PROXY_USER  = env.PROXY_USER  || 'user';
+  const PROXY_PASS  = env.PROXY_PASS  || 'changeme';
+  const VLESS_UUID  = env.VLESS_UUID  || '';
+  const url  = new URL(request.url);
   const host = request.headers.get('host') || url.host;
 
-  // ── VLESS over WebSocket — relay to Railway ──────────────────────────────
+  // ── VLESS over WebSocket — direct CF socket proxy ─────────────────────────
   if (url.pathname === '/vless') {
     if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
       return new Response('WebSocket required', { status: 400 });
     }
-    return handleVlessRelay(request);
+    return handleVless(request, VLESS_UUID);
   }
 
-  // ── DNS-over-HTTPS (GET and POST) ─────────────────────────────────────────
+  // ── DNS-over-HTTPS ────────────────────────────────────────────────────────
   if (url.pathname === '/dns-query') {
     const target = new URL('https://dns.google/dns-query');
     url.searchParams.forEach((v, k) => target.searchParams.set(k, v));
@@ -89,74 +91,127 @@ async function handleRequest(request, env) {
   return new Response('Not Found', { status: 404 });
 }
 
-// ── VLESS WebSocket relay ─────────────────────────────────────────────────────
-// Accepts WS from client, opens WS to Railway, bridges all messages.
+// ── VLESS handler ─────────────────────────────────────────────────────────────
+// Parses VLESS header, connects to destination via cloudflare:sockets,
+// bridges WebSocket ↔ TCP transparently.
 
-async function handleVlessRelay(request) {
-  // CF Workers: fetch() does NOT support wss:// — must use new WebSocket(url).
-  // Client messages are buffered until the upstream connection opens.
+async function handleVless(request, vlessUuid) {
   const { 0: client, 1: server } = new WebSocketPair();
   server.accept();
 
-  let upstream;
-  try {
-    upstream = new WebSocket(RAILWAY_WS);
-  } catch (e) {
-    server.close(1011, 'upstream init failed');
-    return new Response(null, { status: 101, webSocket: client });
-  }
+  const dataQueue  = [];    // messages that arrive before dest is ready
+  let destWriter   = null;
+  let initialized  = false;
+  let firstMsg     = true;
 
-  // Buffer client frames until upstream is open (VLESS header arrives immediately)
-  const clientQueue = [];
-  let upstreamReady = false;
+  const cleanup = () => {
+    try { destWriter?.close(); } catch (_) {}
+    try { server.close(1000, ''); } catch (_) {}
+  };
 
-  server.addEventListener('message', ({ data }) => {
-    if (upstreamReady) {
-      try { upstream.send(data); } catch (_) {}
+  const initDest = async (raw) => {
+    const parsed = parseVlessHeader(raw, vlessUuid);
+    if (!parsed) { server.close(1002, 'invalid VLESS header'); return; }
+    const { host, port, remainingData } = parsed;
+
+    let destSocket;
+    try {
+      destSocket = connect({ hostname: host, port, secureTransport: 'off' });
+    } catch (e) {
+      server.close(1011, 'connect failed');
+      return;
+    }
+
+    destWriter = destSocket.writable.getWriter();
+
+    // VLESS response: version=0, addLen=0
+    server.send(new Uint8Array([0, 0]));
+
+    try {
+      if (remainingData.length > 0) await destWriter.write(remainingData);
+      // Drain messages queued while connecting
+      while (dataQueue.length > 0) await destWriter.write(dataQueue.shift());
+      initialized = true;
+    } catch (_) { cleanup(); return; }
+
+    // Pipe destSocket.readable → WebSocket
+    (async () => {
+      const reader = destSocket.readable.getReader();
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          try { server.send(value); } catch (_) { break; }
+        }
+      } catch (_) {}
+      cleanup();
+    })();
+  };
+
+  server.addEventListener('message', async ({ data }) => {
+    const raw = toU8(data);
+    if (firstMsg) {
+      firstMsg = false;
+      await initDest(raw);
+    } else if (!initialized) {
+      dataQueue.push(raw);
     } else {
-      clientQueue.push(data);
+      try { await destWriter.write(raw); } catch (_) { cleanup(); }
     }
   });
-  server.addEventListener('close', ({ code, reason }) => {
-    try { upstream.close(code || 1000, reason || ''); } catch (_) {}
-  });
-  server.addEventListener('error', () => {
-    try { upstream.close(1011, 'client error'); } catch (_) {}
-  });
-
-  upstream.addEventListener('open', () => {
-    upstreamReady = true;
-    for (const data of clientQueue) {
-      try { upstream.send(data); } catch (_) { break; }
-    }
-    clientQueue.length = 0;
-  });
-  upstream.addEventListener('message', ({ data }) => {
-    try { server.send(data); } catch (_) {}
-  });
-  upstream.addEventListener('close', ({ code, reason }) => {
-    try { server.close(code || 1000, reason || ''); } catch (_) {}
-  });
-  upstream.addEventListener('error', () => {
-    try { server.close(1011, 'upstream error'); } catch (_) {}
-  });
+  server.addEventListener('close', cleanup);
+  server.addEventListener('error', cleanup);
 
   return new Response(null, { status: 101, webSocket: client });
 }
 
-// ── Auth ──────────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-function checkAuth(header, user, pass) {
-  if (!header) return false;
-  const [type, creds] = (header || '').split(' ');
-  if (type !== 'Basic') return false;
-  const decoded = atob(creds || '');
-  const colon = decoded.indexOf(':');
-  if (colon === -1) return false;
-  return decoded.slice(0, colon) === user && decoded.slice(colon + 1) === pass;
+function toU8(data) {
+  if (data instanceof ArrayBuffer) return new Uint8Array(data);
+  if (data instanceof Uint8Array)  return data;
+  if (typeof data === 'string')    return new TextEncoder().encode(data);
+  return new Uint8Array(data);
 }
 
-// ── Generators ────────────────────────────────────────────────────────────────
+function parseVlessHeader(buf, expectedUuid) {
+  try {
+    let off = 0;
+    if (buf[off++] !== 0) return null;  // version must be 0
+
+    // Validate UUID
+    if (expectedUuid) {
+      const hex = [...buf.slice(off, off + 16)].map(b => b.toString(16).padStart(2, '0')).join('');
+      const uuid = `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+      if (uuid !== expectedUuid) return null;
+    }
+    off += 16;
+
+    off += buf[off++];   // skip additional bytes (addLen)
+    if (buf[off++] !== 1) return null;  // cmd: 1 = TCP only
+
+    const port = (buf[off] << 8) | buf[off + 1]; off += 2;
+    const addrType = buf[off++];
+    let host;
+
+    if (addrType === 1) {               // IPv4
+      host = `${buf[off]}.${buf[off+1]}.${buf[off+2]}.${buf[off+3]}`; off += 4;
+    } else if (addrType === 2) {        // Domain
+      const len = buf[off++];
+      host = new TextDecoder().decode(buf.slice(off, off + len)); off += len;
+    } else if (addrType === 3) {        // IPv6
+      const p = [];
+      for (let i = 0; i < 8; i++) {
+        p.push(((buf[off] << 8) | buf[off + 1]).toString(16).padStart(4, '0')); off += 2;
+      }
+      host = p.join(':');
+    } else return null;
+
+    return { host, port, remainingData: buf.slice(off) };
+  } catch (_) { return null; }
+}
+
+// ── Profile / UI generators ───────────────────────────────────────────────────
 
 function makeDNSMobileconfig(host) {
   const rootId = crypto.randomUUID(), payloadId = crypto.randomUUID();
@@ -183,10 +238,7 @@ function makeDNSMobileconfig(host) {
         <key>DNSProtocol</key><string>HTTPS</string>
         <key>ServerURL</key><string>https://dns.google/dns-query</string>
         <key>ServerAddresses</key>
-        <array>
-          <string>8.8.8.8</string>
-          <string>8.8.4.4</string>
-        </array>
+        <array><string>8.8.8.8</string><string>8.8.4.4</string></array>
       </dict>
     </dict>
   </array>
@@ -240,7 +292,6 @@ function makeMobileconfig(host, user, pass) {
 
 function makeUI(host, user, pass, vlessUuid) {
   const base = `https://${host}`;
-  const RAILWAY_HOST = 'prox-production-e4e0.up.railway.app';
   const vlessCF = vlessUuid
     ? `vless://${vlessUuid}@${host}:443?encryption=none&security=tls&type=ws&path=%2Fvless&host=${host}#prox-cf`
     : '';
@@ -260,16 +311,17 @@ h1{font-size:28px;font-weight:700;margin-bottom:6px}
 .sub{font-size:15px;color:#8e8e93;margin-bottom:24px}
 .c{background:white;border-radius:16px;padding:20px;margin-bottom:16px}
 .c h2{font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:#8e8e93;margin-bottom:4px}
-.c .h2sub{font-size:12px;color:#8e8e93;margin-bottom:12px}
+.h2sub{font-size:12px;color:#8e8e93;margin-bottom:12px}
 .badge{display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;margin-left:6px;vertical-align:middle}
 .badge.green{background:#d1f5db;color:#1a7f37}
 .badge.orange{background:#fff3cd;color:#856404}
 .r{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f2f2f7}
 .r:last-child{border-bottom:none}
-.l{color:#8e8e93;font-size:15px}.v{font-family:monospace;font-size:13px;font-weight:500;word-break:break-all;text-align:right;max-width:65%}
+.l{color:#8e8e93;font-size:15px}
+.v{font-family:monospace;font-size:13px;font-weight:500;word-break:break-all;text-align:right;max-width:65%}
 .btn{display:block;width:100%;padding:14px;background:#34C759;color:white;border:none;
   border-radius:12px;text-align:center;font-size:16px;font-weight:600;margin-top:12px;cursor:pointer}
-.btn.blue{background:#007AFF}
+.btn.blue{background:#007AFF}.btn.grey{background:#8e8e93}
 .link{background:#f2f2f7;border-radius:10px;padding:10px 12px;font-family:monospace;
   font-size:11px;word-break:break-all;margin:12px 0;color:#1c1c1e;user-select:all;line-height:1.5}
 ol{list-style:none;counter-reset:s}
@@ -284,45 +336,51 @@ li::before{content:counter(s);position:absolute;left:0;top:8px;background:#34C75
 <h1>prox</h1>
 <p class="sub">Обход блокировок</p>
 
-${vlessRailway ? `
+${vlessCF ? `
 <div class="c">
-  <h2>Railway <span class="badge green">Быстрый · ~100 мс</span></h2>
-  <p class="h2sub">Прямое подключение — минимальный пинг</p>
+  <h2>Cloudflare <span class="badge green">Быстрый · ~50 мс</span></h2>
+  <p class="h2sub">Прямой прокси через Cloudflare Edge — рекомендуется</p>
   <ol>
     <li>Скачай <b>V2Box</b> из App Store — бесплатно</li>
     <li>Нажми кнопку ниже — ссылка скопируется</li>
     <li>Открой V2Box → <b>+</b> → <b>Import from clipboard</b></li>
-    <li>Появится «prox-railway» → нажми <b>Connect</b></li>
+    <li>Появится «prox-cf» → нажми <b>Connect</b></li>
     <li>Разреши VPN — готово</li>
   </ol>
-  <div class="link" id="vr">${vlessRailway}</div>
-  <button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('vr').innerText).then(()=>{this.textContent='Скопировано ✓';setTimeout(()=>this.textContent='Скопировать Railway',2000)})">Скопировать Railway</button>
-  <p class="note">Используй этот если нет блокировок Railway в твоей сети.</p>
-</div>` : ''}
-
-${vlessCF ? `
-<div class="c">
-  <h2>Cloudflare <span class="badge orange">Резерв · ~1000 мс</span></h2>
-  <p class="h2sub">Через Cloudflare — если Railway заблокирован</p>
-  <div class="link" id="vl">${vlessCF}</div>
-  <button class="btn" style="background:#8e8e93" onclick="navigator.clipboard.writeText(document.getElementById('vl').innerText).then(()=>{this.textContent='Скопировано ✓';setTimeout(()=>this.textContent='Скопировать Cloudflare',2000)})">Скопировать Cloudflare</button>
-  <p class="note">Трафик идёт через Cloudflare → Railway. Выше пинг, но работает всегда.</p>
+  <div class="link" id="vcf">${vlessCF}</div>
+  <button class="btn" onclick="copy('vcf',this,'Скопировать Cloudflare')">Скопировать Cloudflare</button>
+  <p class="note">Трафик идёт прямо через Cloudflare. Без лимитов.</p>
 </div>` : `<div class="c"><p style="color:#8e8e93">Загрузка...</p></div>`}
+
+${vlessRailway ? `
+<div class="c">
+  <h2>Railway <span class="badge orange">Резерв</span></h2>
+  <p class="h2sub">Прямое подключение к серверу — если Cloudflare заблокирован</p>
+  <div class="link" id="vrw">${vlessRailway}</div>
+  <button class="btn grey" onclick="copy('vrw',this,'Скопировать Railway')">Скопировать Railway</button>
+</div>` : ''}
 
 <div class="c">
   <h2>DNS профиль (дополнительно)</h2>
-  <p style="font-size:14px;color:#3c3c43;margin-bottom:12px">Шифрует DNS запросы. Установи вместе с VPN для максимального обхода.</p>
-  <a href="${base}/dns.mobileconfig" class="btn blue" style="display:block;text-align:center;text-decoration:none;color:white;padding:14px;border-radius:12px;font-size:16px;font-weight:600">Скачать DNS профиль</a>
+  <p style="font-size:14px;color:#3c3c43;margin-bottom:12px">Шифрует DNS запросы. Установи вместе с VPN.</p>
+  <a href="${base}/dns.mobileconfig" class="btn blue" style="display:block;text-align:center;text-decoration:none;color:white;padding:14px;border-radius:12px;font-size:16px;font-weight:600;margin-top:0">Скачать DNS профиль</a>
 </div>
 
 <div class="c">
-  <h2>Параметры (для ручной настройки)</h2>
-  <div class="r"><span class="l">Railway host</span><span class="v">${RAILWAY_HOST}</span></div>
+  <h2>Параметры</h2>
   <div class="r"><span class="l">CF host</span><span class="v">${host}</span></div>
+  <div class="r"><span class="l">Railway host</span><span class="v">${RAILWAY_HOST}</span></div>
   ${vlessUuid ? `<div class="r"><span class="l">UUID</span><span class="v">${vlessUuid}</span></div>` : ''}
   <div class="r"><span class="l">Протокол</span><span class="v">VLESS+WS+TLS</span></div>
   <div class="r"><span class="l">Путь</span><span class="v">/vless</span></div>
   <div class="r"><span class="l">Порт</span><span class="v">443</span></div>
 </div>
-</div></body></html>`;
+</div>
+<script>
+function copy(id,btn,label){
+  navigator.clipboard.writeText(document.getElementById(id).innerText)
+    .then(()=>{btn.textContent='Скопировано ✓';setTimeout(()=>btn.textContent=label,2000)});
+}
+</script>
+</body></html>`;
 }
