@@ -13,6 +13,10 @@ echo "[prox] VLESS UUID: $XRAY_UUID"
 cat > /tmp/xray.json << EOF
 {
   "log": {"loglevel": "warning"},
+  "dns": {
+    "servers": ["1.1.1.1", "8.8.8.8", "8.8.4.4"],
+    "queryStrategy": "UseIPv4"
+  },
   "inbounds": [{
     "listen": "127.0.0.1",
     "port": 8388,
@@ -26,7 +30,10 @@ cat > /tmp/xray.json << EOF
       "wsSettings": {"path": "/vless"}
     }
   }],
-  "outbounds": [{"protocol": "freedom"}]
+  "outbounds": [{
+    "protocol": "freedom",
+    "settings": {"domainStrategy": "UseIPv4"}
+  }]
 }
 EOF
 
