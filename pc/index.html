@@ -283,6 +283,12 @@
     if (busy) document.getElementById('hint').textContent = msg;
   });
 
+  window.api.onVpnDrop(() => {
+    busy = false; on = false;
+    ui('error', 'VPN прервался. Нажми для переподключения.');
+    setTimeout(() => ui('off'), 3500);
+  });
+
   async function toggle() {
     if (busy) return;
     busy = true;
