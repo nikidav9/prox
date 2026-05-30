@@ -93,31 +93,29 @@ async function handleRequest(request, env) {
 // Accepts WS from client, opens WS to Railway, bridges all messages.
 
 async function handleVlessRelay(request) {
+  // CF Workers: fetch() does NOT support wss:// — must use new WebSocket(url).
+  // Client messages are buffered until the upstream connection opens.
   const { 0: client, 1: server } = new WebSocketPair();
   server.accept();
 
-  // Open upstream WS to Railway
-  const upstreamResp = await fetch(RAILWAY_WS, {
-    headers: {
-      'Upgrade': 'websocket',
-      'Connection': 'Upgrade',
-      'Sec-WebSocket-Version': '13',
-      'Sec-WebSocket-Key': btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16)))),
-      'Host': 'prox-production-e4e0.up.railway.app',
-    },
-  });
-
-  if (upstreamResp.status !== 101 || !upstreamResp.webSocket) {
-    server.close(1011, 'upstream unavailable');
+  let upstream;
+  try {
+    upstream = new WebSocket(RAILWAY_WS);
+  } catch (e) {
+    server.close(1011, 'upstream init failed');
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  const upstream = upstreamResp.webSocket;
-  upstream.accept();
+  // Buffer client frames until upstream is open (VLESS header arrives immediately)
+  const clientQueue = [];
+  let upstreamReady = false;
 
-  // client → Railway
   server.addEventListener('message', ({ data }) => {
-    try { upstream.send(data); } catch (_) {}
+    if (upstreamReady) {
+      try { upstream.send(data); } catch (_) {}
+    } else {
+      clientQueue.push(data);
+    }
   });
   server.addEventListener('close', ({ code, reason }) => {
     try { upstream.close(code || 1000, reason || ''); } catch (_) {}
@@ -126,7 +124,13 @@ async function handleVlessRelay(request) {
     try { upstream.close(1011, 'client error'); } catch (_) {}
   });
 
-  // Railway → client
+  upstream.addEventListener('open', () => {
+    upstreamReady = true;
+    for (const data of clientQueue) {
+      try { upstream.send(data); } catch (_) { break; }
+    }
+    clientQueue.length = 0;
+  });
   upstream.addEventListener('message', ({ data }) => {
     try { server.send(data); } catch (_) {}
   });
