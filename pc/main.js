@@ -2,6 +2,7 @@
 
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } = require('electron');
 const { exec, spawn } = require('child_process');
+const http = require('http');
 const net  = require('net');
 const fs   = require('fs');
 const os   = require('os');
@@ -25,43 +26,21 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) { app.quit(); }
 else { app.on('second-instance', () => { if (win) { win.show(); win.focus(); } }); }
 
-// ── Tunnel test: CONNECT then plain HTTP GET through tunnel ───────────────────
-// Tests the full CONNECT path (which browsers use for HTTPS) without needing TLS.
+// ── Tunnel test: proxy-style HTTP GET to verify the full WS tunnel ────────────
 
 function testTunnel() {
   return new Promise((resolve) => {
-    const sock = net.createConnection({ host: '127.0.0.1', port: PROXY_PORT });
-    let settled = false;
-    const done = (v) => {
-      if (!settled) {
-        settled = true;
-        try { sock.destroy(); } catch (_) {}
-        resolve(v);
-      }
-    };
-
-    let stage = 0; // 0 = waiting for proxy 200, 1 = waiting for remote response
-    let buf = '';
-
-    sock.setTimeout(18000, () => done(false));
-    sock.on('error', () => done(false));
-    sock.on('connect', () => {
-      sock.write('CONNECT cp.cloudflare.com:80 HTTP/1.1\r\nHost: cp.cloudflare.com:80\r\n\r\n');
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port: PROXY_PORT,
+      method: 'GET',
+      path: 'http://cp.cloudflare.com/',
+      headers: { Host: 'cp.cloudflare.com' },
     });
-    sock.on('data', (chunk) => {
-      buf += chunk.toString();
-      if (stage === 0) {
-        if (!buf.includes('\r\n\r\n')) return;
-        if (!buf.startsWith('HTTP/1.1 200')) { done(false); return; }
-        // Proxy accepted CONNECT — send plain HTTP GET through the tunnel
-        stage = 1;
-        buf = '';
-        sock.write('GET / HTTP/1.0\r\nHost: cp.cloudflare.com\r\n\r\n');
-      } else {
-        // Any response from the remote server means the tunnel works end-to-end
-        if (buf.length > 4) done(true);
-      }
-    });
+    req.on('response', (res) => { res.resume(); resolve(true); });
+    req.on('error',    ()      => resolve(false));
+    req.setTimeout(8000, () => { req.destroy(); resolve(false); });
+    req.end();
   });
 }
 
@@ -204,18 +183,18 @@ function startXray(xrayPath) {
       }
     });
 
-    const deadline = Date.now() + 6000;
+    const deadline = Date.now() + 5000;
     const poll = () => {
       if (!xrayProcess) return;
       const s = net.createConnection({ port: PROXY_PORT, host: '127.0.0.1' });
       s.on('connect', () => { s.destroy(); startDone = true; resolve(); });
       s.on('error', () => {
         if (!xrayProcess) { reject(new Error(stderrBuf.slice(0, 200) || 'Xray exited')); return; }
-        if (Date.now() < deadline) setTimeout(poll, 250);
+        if (Date.now() < deadline) setTimeout(poll, 200);
         else reject(new Error('Xray timeout'));
       });
     };
-    setTimeout(poll, 500);
+    setTimeout(poll, 300);
   });
 }
 
@@ -285,7 +264,7 @@ ipcMain.handle('connect', async () => {
       if (ok) return true;
       notify('Туннель не отвечает, пробую другой способ...');
       stopFn();
-      await new Promise(r => setTimeout(r, 800));
+      await new Promise(r => setTimeout(r, 400));
       return false;
     } catch (_) {
       stopFn();
