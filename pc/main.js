@@ -10,8 +10,12 @@ const path = require('path');
 
 const PROXY_PORT  = 10809;
 const VLESS_UUID  = 'f03e5c9e-16ae-484e-a405-c78695b1142a';
-const VLESS_HOST  = 'prox-production-e4e0.up.railway.app';
-const VLESS_URL   = `wss://${VLESS_HOST}/vless`;
+// Primary: Cloudflare Worker (unlimited free tier, bypasses Russian blocks)
+const CF_HOST     = 'prox.nikidav9.workers.dev';
+const CF_URL      = `wss://${CF_HOST}/vless`;
+// Fallback: Railway direct
+const RAIL_HOST   = 'prox-production-e4e0.up.railway.app';
+const RAIL_URL    = `wss://${RAIL_HOST}/vless`;
 // UUID as bytes for VLESS header
 const UUID_BYTES  = Buffer.from(VLESS_UUID.replace(/-/g, ''), 'hex');
 const REG = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
@@ -23,6 +27,7 @@ const PS_REFRESH = 'powershell -NoProfile -NonInteractive -Command '
   + '$t::InternetSetOption(0,39,0,0);$t::InternetSetOption(0,37,0,0)"';
 
 let win = null, tray = null, xrayProcess = null, proxyServer = null, connected = false;
+let activeVlessUrl = CF_URL; // CF primary, may fall back to RAIL_URL
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) { app.quit(); }
@@ -75,8 +80,12 @@ function createProxyServer() {
     const bufData = (c) => pending.push(c);
     socket.on('data', bufData);
 
-    const ws = new WebSocket(VLESS_URL);
+    // Try primary URL; if it errors before first message, fallback to other URL
+    const tryUrl = activeVlessUrl;
+    const fallbackUrl = (tryUrl === CF_URL) ? RAIL_URL : CF_URL;
+    const ws = new WebSocket(tryUrl);
     let respStripped = false;
+    let gotMessage = false;
 
     ws.on('open', () => {
       socket.removeListener('data', bufData);
@@ -86,6 +95,7 @@ function createProxyServer() {
       socket.on('data', (c) => { if (ws.readyState === WebSocket.OPEN) ws.send(c); });
     });
     ws.on('message', (d) => {
+      gotMessage = true;
       if (!respStripped) {
         const buf = Buffer.isBuffer(d) ? d : Buffer.from(d);
         const skip = 2 + (buf[1] || 0);
@@ -95,8 +105,16 @@ function createProxyServer() {
       }
       try { socket.write(d); } catch (_) {}
     });
-    ws.on('error',   () => { try { socket.destroy(); } catch (_) {} });
-    ws.on('close',   () => { try { socket.destroy(); } catch (_) {} });
+    ws.on('error', () => {
+      if (!gotMessage && fallbackUrl) {
+        socket.removeListener('data', bufData);
+        activeVlessUrl = fallbackUrl;
+        openTunnel(socket, host, port, pending.length ? [...pending] : []);
+      } else {
+        try { socket.destroy(); } catch (_) {}
+      }
+    });
+    ws.on('close', () => { try { socket.destroy(); } catch (_) {} });
     socket.on('error', () => { try { ws.close(); } catch (_) {} });
     socket.on('end',   () => { try { ws.close(); } catch (_) {} });
   }
@@ -184,12 +202,12 @@ function makeXrayConfig() {
     inbounds: [{ port: PROXY_PORT, listen: '127.0.0.1', protocol: 'http' }],
     outbounds: [{
       protocol: 'vless',
-      settings: { vnext: [{ address: VLESS_HOST, port: 443,
+      settings: { vnext: [{ address: CF_HOST, port: 443,
         users: [{ id: VLESS_UUID, encryption: 'none' }] }] },
       streamSettings: {
         network: 'ws', security: 'tls',
-        wsSettings: { path: '/vless', headers: { Host: VLESS_HOST } },
-        tlsSettings: { serverName: VLESS_HOST, allowInsecure: false },
+        wsSettings: { path: '/vless', headers: { Host: CF_HOST } },
+        tlsSettings: { serverName: CF_HOST, allowInsecure: false },
       },
     }],
   };
@@ -349,6 +367,7 @@ ipcMain.handle('disconnect', async () => {
   stopXray();
   stopWSProxy();
   connected = false;
+  activeVlessUrl = CF_URL;
   updateTray();
   return { ok: true };
 });
