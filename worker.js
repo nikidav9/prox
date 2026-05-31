@@ -1,7 +1,10 @@
 /**
- * Cloudflare Worker — VLESS relay
- * /vless → WebSocket relay to Railway VLESS backend (confirmed working)
+ * Cloudflare Worker — VLESS direct proxy via cloudflare:sockets
+ * /vless → direct TCP to destination (no Railway needed)
+ * /cf-test?port=443 — test TCP socket connectivity
  */
+
+import { connect } from 'cloudflare:sockets';
 
 const RAILWAY_HOST = 'prox-production-e4e0.up.railway.app';
 const RAILWAY_WS   = `wss://${RAILWAY_HOST}/vless`;
@@ -23,25 +26,32 @@ async function handleRequest(request, env) {
   const url  = new URL(request.url);
   const host = request.headers.get('host') || url.host;
 
-  // ── VLESS relay over WebSocket ────────────────────────────────────────────
+  // ── VLESS direct proxy (cloudflare:sockets) ──────────────────────────────
   if (url.pathname === '/vless') {
     if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
       return new Response('WebSocket required', { status: 400 });
     }
-    return handleVlessRelay(request);
+    return handleVless(request, VLESS_UUID);
   }
 
-  // ── Upstream connectivity test ────────────────────────────────────────────
+  // ── TCP socket test ───────────────────────────────────────────────────────
+  // /cf-test?host=example.com&port=443
   if (url.pathname === '/cf-test') {
+    const testHost = url.searchParams.get('host') || 'example.com';
+    const testPort = parseInt(url.searchParams.get('port') || '443', 10);
     try {
       const t0 = Date.now();
-      const r = await fetch(`https://${RAILWAY_HOST}/`, { method: 'HEAD' });
+      const sock = connect({ hostname: testHost, port: testPort });
+      await sock.opened;
+      const ms = Date.now() - t0;
+      try { sock.close(); } catch (_) {}
       return new Response(
-        `Railway reachable\nstatus: ${r.status}\nlatency: ${Date.now() - t0}ms`,
+        `CF sockets OK\nhost: ${testHost}:${testPort}\nconnect: ${ms}ms`,
         { headers: { 'content-type': 'text/plain' } });
     } catch (e) {
-      return new Response(`Railway unreachable\nerror: ${e.message}`,
-        { status: 502, headers: { 'content-type': 'text/plain' } });
+      return new Response(
+        `CF sockets FAILED\nhost: ${testHost}:${testPort}\nerror: ${e.message}`,
+        { status: 500, headers: { 'content-type': 'text/plain' } });
     }
   }
 
@@ -103,7 +113,112 @@ async function handleRequest(request, env) {
   return new Response('Not Found', { status: 404 });
 }
 
-// ── VLESS WebSocket relay ─────────────────────────────────────────────────────
+// ── VLESS direct proxy via cloudflare:sockets ────────────────────────────────
+
+async function handleVless(request, vlessUuid) {
+  const { 0: client, 1: server } = new WebSocketPair();
+  server.accept();
+
+  const { readable, writable } = new TransformStream();
+  const tsWriter = writable.getWriter();
+  server.addEventListener('message', ({ data }) => { tsWriter.write(toU8(data)).catch(() => {}); });
+  server.addEventListener('close',   () => { tsWriter.close().catch(() => {}); });
+  server.addEventListener('error',   () => { tsWriter.abort(new Error('ws error')).catch(() => {}); });
+
+  proxyVless(server, readable, vlessUuid).catch(() => {
+    try { server.close(1011, 'proxy error'); } catch (_) {}
+  });
+
+  return new Response(null, { status: 101, webSocket: client });
+}
+
+async function proxyVless(ws, readable, vlessUuid) {
+  const reader = readable.getReader();
+  const { value: first, done } = await reader.read();
+  if (done || !first) return;
+
+  const parsed = parseVlessHeader(first, vlessUuid);
+  if (!parsed) { ws.close(1002, 'invalid VLESS header'); return; }
+
+  const { host, port, remainingData } = parsed;
+
+  let dest;
+  try {
+    dest = connect({ hostname: host, port });
+    await dest.opened;
+  } catch (e) {
+    ws.close(1011, `connect failed: ${host}:${port} — ${e.message}`);
+    return;
+  }
+
+  ws.send(new Uint8Array([0, 0]));
+
+  const destWriter = dest.writable.getWriter();
+  if (remainingData.length > 0) await destWriter.write(remainingData);
+
+  const pipeIn = (async () => {
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        await destWriter.write(value);
+      }
+    } catch (_) {}
+    try { destWriter.close(); } catch (_) {}
+  })();
+
+  const pipeOut = (async () => {
+    const destReader = dest.readable.getReader();
+    try {
+      for (;;) {
+        const { value, done } = await destReader.read();
+        if (done) break;
+        ws.send(value);
+      }
+    } catch (_) {}
+    try { ws.close(1000, ''); } catch (_) {}
+  })();
+
+  await Promise.all([pipeIn, pipeOut]);
+}
+
+function toU8(data) {
+  if (data instanceof ArrayBuffer) return new Uint8Array(data);
+  if (data instanceof Uint8Array)  return data;
+  if (typeof data === 'string')    return new TextEncoder().encode(data);
+  return new Uint8Array(data);
+}
+
+function parseVlessHeader(buf, expectedUuid) {
+  try {
+    let off = 0;
+    if (buf[off++] !== 0) return null;
+    if (expectedUuid) {
+      const hex = [...buf.slice(off, off + 16)].map(b => b.toString(16).padStart(2, '0')).join('');
+      const uuid = `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+      if (uuid !== expectedUuid) return null;
+    }
+    off += 16;
+    off += buf[off++];
+    if (buf[off++] !== 1) return null;
+    const port = (buf[off] << 8) | buf[off + 1]; off += 2;
+    const addrType = buf[off++];
+    let host;
+    if (addrType === 1) {
+      host = `${buf[off]}.${buf[off+1]}.${buf[off+2]}.${buf[off+3]}`; off += 4;
+    } else if (addrType === 2) {
+      const len = buf[off++];
+      host = new TextDecoder().decode(buf.slice(off, off + len)); off += len;
+    } else if (addrType === 3) {
+      const p = [];
+      for (let i = 0; i < 8; i++) { p.push(((buf[off] << 8) | buf[off+1]).toString(16)); off += 2; }
+      host = p.join(':');
+    } else return null;
+    return { host, port, remainingData: buf.slice(off) };
+  } catch (_) { return null; }
+}
+
+// ── VLESS WebSocket relay (fallback) ─────────────────────────────────────────
 // Bridges client ↔ Railway VLESS backend via two WebSocket connections.
 // Queues client messages until upstream opens to avoid drops.
 
