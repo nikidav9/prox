@@ -92,77 +92,81 @@ async function handleRequest(request, env) {
 }
 
 // ── VLESS handler ─────────────────────────────────────────────────────────────
-// Parses VLESS header, connects to destination via cloudflare:sockets,
-// bridges WebSocket ↔ TCP transparently.
+// Converts WS messages → ReadableStream, reads VLESS header sequentially,
+// then pipes bidirectionally with cloudflare:sockets.
 
 async function handleVless(request, vlessUuid) {
   const { 0: client, 1: server } = new WebSocketPair();
   server.accept();
 
-  const dataQueue  = [];    // messages that arrive before dest is ready
-  let destWriter   = null;
-  let initialized  = false;
-  let firstMsg     = true;
-
-  const cleanup = () => {
-    try { destWriter?.close(); } catch (_) {}
-    try { server.close(1000, ''); } catch (_) {}
-  };
-
-  const initDest = async (raw) => {
-    const parsed = parseVlessHeader(raw, vlessUuid);
-    if (!parsed) { server.close(1002, 'invalid VLESS header'); return; }
-    const { host, port, remainingData } = parsed;
-
-    let destSocket;
-    try {
-      destSocket = connect({ hostname: host, port, secureTransport: 'off' });
-    } catch (e) {
-      server.close(1011, 'connect failed');
-      return;
-    }
-
-    destWriter = destSocket.writable.getWriter();
-
-    // VLESS response: version=0, addLen=0
-    server.send(new Uint8Array([0, 0]));
-
-    try {
-      if (remainingData.length > 0) await destWriter.write(remainingData);
-      // Drain messages queued while connecting
-      while (dataQueue.length > 0) await destWriter.write(dataQueue.shift());
-      initialized = true;
-    } catch (_) { cleanup(); return; }
-
-    // Pipe destSocket.readable → WebSocket
-    (async () => {
-      const reader = destSocket.readable.getReader();
-      try {
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          try { server.send(value); } catch (_) { break; }
-        }
-      } catch (_) {}
-      cleanup();
-    })();
-  };
-
-  server.addEventListener('message', async ({ data }) => {
-    const raw = toU8(data);
-    if (firstMsg) {
-      firstMsg = false;
-      await initDest(raw);
-    } else if (!initialized) {
-      dataQueue.push(raw);
-    } else {
-      try { await destWriter.write(raw); } catch (_) { cleanup(); }
-    }
+  // Bridge WS message events → a ReadableStream so we can read sequentially
+  const { readable, writable } = new TransformStream();
+  const tsWriter = writable.getWriter();
+  server.addEventListener('message', ({ data }) => {
+    tsWriter.write(toU8(data)).catch(() => {});
   });
-  server.addEventListener('close', cleanup);
-  server.addEventListener('error', cleanup);
+  server.addEventListener('close',  () => { tsWriter.close().catch(() => {}); });
+  server.addEventListener('error',  () => { tsWriter.abort(new Error('ws error')).catch(() => {}); });
+
+  proxyVless(server, readable, vlessUuid).catch(() => {
+    try { server.close(1011, 'proxy error'); } catch (_) {}
+  });
 
   return new Response(null, { status: 101, webSocket: client });
+}
+
+async function proxyVless(ws, readable, vlessUuid) {
+  const reader = readable.getReader();
+
+  // Read first message — must contain the full VLESS header
+  const { value: first, done } = await reader.read();
+  if (done || !first) return;
+
+  const parsed = parseVlessHeader(first, vlessUuid);
+  if (!parsed) { ws.close(1002, 'invalid VLESS header'); return; }
+
+  const { host, port, remainingData } = parsed;
+
+  // Open TCP connection to destination via CF edge
+  const dest = connect(
+    { hostname: host, port },
+    { secureTransport: 'off', allowHalfOpen: false },
+  );
+
+  // Acknowledge VLESS: version=0, addLen=0
+  ws.send(new Uint8Array([0, 0]));
+
+  const destWriter = dest.writable.getWriter();
+
+  // Forward any bytes that came after the VLESS header in the first message
+  if (remainingData.length > 0) await destWriter.write(remainingData);
+
+  // ── WS → dest ──
+  const pipeIn = (async () => {
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        await destWriter.write(value);
+      }
+    } catch (_) {}
+    try { destWriter.close(); } catch (_) {}
+  })();
+
+  // ── dest → WS ──
+  const pipeOut = (async () => {
+    const destReader = dest.readable.getReader();
+    try {
+      for (;;) {
+        const { value, done } = await destReader.read();
+        if (done) break;
+        ws.send(value);
+      }
+    } catch (_) {}
+    try { ws.close(1000, ''); } catch (_) {}
+  })();
+
+  await Promise.all([pipeIn, pipeOut]);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
