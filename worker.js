@@ -33,6 +33,23 @@ async function handleRequest(request, env) {
     return handleVless(request, VLESS_UUID);
   }
 
+  // ── CF socket test (browser debug) ───────────────────────────────────────
+  if (url.pathname === '/cf-test') {
+    try {
+      const sock = connect({ hostname: 'cp.cloudflare.com', port: 80 });
+      if ('opened' in sock) await sock.opened;
+      const w = sock.writable.getWriter();
+      await w.write(new TextEncoder().encode('HEAD / HTTP/1.0\r\nHost: cp.cloudflare.com\r\n\r\n'));
+      const r = sock.readable.getReader();
+      const { value } = await r.read();
+      await w.close();
+      return new Response('CF sockets OK: ' + new TextDecoder().decode(value).slice(0, 120),
+        { headers: { 'content-type': 'text/plain' } });
+    } catch (e) {
+      return new Response('CF sockets FAILED: ' + e.message, { status: 500, headers: { 'content-type': 'text/plain' } });
+    }
+  }
+
   // ── DNS-over-HTTPS ────────────────────────────────────────────────────────
   if (url.pathname === '/dns-query') {
     const target = new URL('https://dns.google/dns-query');
@@ -128,10 +145,15 @@ async function proxyVless(ws, readable, vlessUuid) {
   const { host, port, remainingData } = parsed;
 
   // Open TCP connection to destination via CF edge
-  const dest = connect(
-    { hostname: host, port },
-    { secureTransport: 'off', allowHalfOpen: false },
-  );
+  // Wait for actual TCP connection before telling client "connected"
+  let dest;
+  try {
+    dest = connect({ hostname: host, port });
+    if (dest.opened) await dest.opened;
+  } catch (e) {
+    ws.close(1011, `connect failed: ${host}:${port}`);
+    return;
+  }
 
   // Acknowledge VLESS: version=0, addLen=0
   ws.send(new Uint8Array([0, 0]));
