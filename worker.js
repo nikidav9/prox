@@ -35,18 +35,26 @@ async function handleRequest(request, env) {
 
   // ── CF socket test (browser debug) ───────────────────────────────────────
   if (url.pathname === '/cf-test') {
+    const testHost = url.searchParams.get('host') || 'example.com';
+    const testPort = parseInt(url.searchParams.get('port') || '80', 10);
     try {
-      const sock = connect({ hostname: 'cp.cloudflare.com', port: 80 });
-      if ('opened' in sock) await sock.opened;
+      const t0 = Date.now();
+      const sock = connect({ hostname: testHost, port: testPort });
+      await sock.opened;
+      const connMs = Date.now() - t0;
       const w = sock.writable.getWriter();
-      await w.write(new TextEncoder().encode('HEAD / HTTP/1.0\r\nHost: cp.cloudflare.com\r\n\r\n'));
+      await w.write(new TextEncoder().encode(`GET / HTTP/1.0\r\nHost: ${testHost}\r\nConnection: close\r\n\r\n`));
       const r = sock.readable.getReader();
       const { value } = await r.read();
-      await w.close();
-      return new Response('CF sockets OK: ' + new TextDecoder().decode(value).slice(0, 120),
+      try { await w.close(); } catch (_) {}
+      const reply = value ? new TextDecoder().decode(value).slice(0, 200) : '(empty)';
+      return new Response(
+        `CF sockets OK\nhost: ${testHost}:${testPort}\nconnect: ${connMs}ms\nreply: ${reply}`,
         { headers: { 'content-type': 'text/plain' } });
     } catch (e) {
-      return new Response('CF sockets FAILED: ' + e.message, { status: 500, headers: { 'content-type': 'text/plain' } });
+      return new Response(
+        `CF sockets FAILED\nhost: ${testHost}:${testPort}\nerror: ${e.message}`,
+        { status: 500, headers: { 'content-type': 'text/plain' } });
     }
   }
 
