@@ -1,341 +1,386 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { AGENTS, Agent } from "@/lib/agents";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { AGENTS, AgentDef } from "@/lib/agents";
 
-type Message = { role: "user" | "model"; text: string };
-type Histories = Record<string, Message[]>;
-type View = "agents" | "chat";
+type AgentState = "typing" | "walking" | "talking" | "idle";
+
+interface AgentRT {
+  def: AgentDef;
+  deskIndex: number;
+  x: number;
+  y: number;
+  tx: number;
+  ty: number;
+  state: AgentState;
+  frame: number;
+  bubble: string | null;
+  bubbleTick: number;
+  autoTick: number;
+}
+
+const W = 1000;
+const H = 520;
+
+const DESK_POSITIONS = [
+  { x: 40, y: 130 },
+  { x: 200, y: 130 },
+  { x: 380, y: 130 },
+  { x: 560, y: 130 },
+  { x: 740, y: 130 },
+  { x: 40, y: 320 },
+  { x: 200, y: 320 },
+  { x: 380, y: 320 },
+  { x: 560, y: 320 },
+  { x: 740, y: 320 },
+];
+
+function homePos(deskIndex: number) {
+  const desk = DESK_POSITIONS[deskIndex];
+  return { x: desk.x + 28, y: desk.y + 16 };
+}
+
+function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function drawBackground(ctx: CanvasRenderingContext2D) {
+  ctx.fillStyle = "#0e0e1e";
+  ctx.fillRect(0, 0, W, H * 0.5);
+  ctx.fillStyle = "#161628";
+  ctx.fillRect(0, H * 0.5, W, H * 0.5);
+  ctx.strokeStyle = "#1e1e38";
+  ctx.lineWidth = 1;
+  for (let gx = 0; gx < W; gx += 40) {
+    ctx.beginPath(); ctx.moveTo(gx, H * 0.5); ctx.lineTo(gx, H); ctx.stroke();
+  }
+  for (let gy = H * 0.5; gy < H; gy += 40) {
+    ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke();
+  }
+  const wins = [60, 210, 390, 570, 740];
+  for (const wx of wins) {
+    ctx.fillStyle = "#1a1a3e";
+    ctx.fillRect(wx, 18, 70, 70);
+    ctx.strokeStyle = "#3a3a6e";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(wx, 18, 70, 70);
+    ctx.strokeStyle = "#3a3a6e";
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(wx + 35, 18); ctx.lineTo(wx + 35, 88); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(wx, 53); ctx.lineTo(wx + 70, 53); ctx.stroke();
+    const stars = [[10,10],[20,25],[55,8],[62,30],[30,40],[8,45],[48,55],[15,60],[60,60],[35,62]];
+    ctx.fillStyle = "#ffffff";
+    for (const [sx, sy] of stars) {
+      if (sx < 70 && sy < 70) ctx.fillRect(wx + sx, 18 + sy, 1, 1);
+    }
+    ctx.fillStyle = "#fffde7";
+    ctx.beginPath(); ctx.arc(wx + 58, 30, 7, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#1a1a3e";
+    ctx.beginPath(); ctx.arc(wx + 61, 28, 6, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+function drawDesk(ctx: CanvasRenderingContext2D, deskIndex: number, frameCount: number) {
+  const { x, y } = DESK_POSITIONS[deskIndex];
+  ctx.fillStyle = "#2a2040"; ctx.fillRect(x, y + 30, 90, 50);
+  ctx.fillStyle = "#1e1535"; ctx.fillRect(x, y + 78, 90, 6);
+  ctx.fillStyle = "#16102a";
+  ctx.fillRect(x + 5, y + 82, 6, 20);
+  ctx.fillRect(x + 79, y + 82, 6, 20);
+  ctx.fillStyle = "#111827";
+  roundRect(ctx, x + 18, y, 54, 38, 3); ctx.fill();
+  ctx.strokeStyle = "#374151"; ctx.lineWidth = 2;
+  roundRect(ctx, x + 18, y, 54, 38, 3); ctx.stroke();
+  ctx.fillStyle = "#0d1117"; ctx.fillRect(x + 21, y + 3, 48, 30);
+  const lineColors = ["#22c55e", "#60a5fa", "#f9a8d4", "#fbbf24"];
+  const lineWidths = [30, 20, 35, 15, 25, 18];
+  for (let li = 0; li < 5; li++) {
+    const lw = lineWidths[li % lineWidths.length];
+    const alpha = 0.6 + 0.4 * Math.sin(frameCount * 0.05 + li * 0.8);
+    ctx.fillStyle = lineColors[li % lineColors.length];
+    ctx.globalAlpha = alpha;
+    ctx.fillRect(x + 23, y + 6 + li * 5, lw, 2);
+  }
+  ctx.globalAlpha = 1;
+  if (Math.floor(frameCount / 30) % 2 === 0) {
+    ctx.fillStyle = "#ffffff"; ctx.fillRect(x + 24, y + 30, 3, 4);
+  }
+  ctx.fillStyle = "#374151";
+  ctx.fillRect(x + 40, y + 38, 10, 5);
+  ctx.fillRect(x + 35, y + 42, 20, 3);
+  ctx.fillStyle = "#1f2937";
+  roundRect(ctx, x + 22, y + 55, 46, 14, 2); ctx.fill();
+  ctx.fillStyle = "#374151";
+  for (let ki = 0; ki < 8; ki++) ctx.fillRect(x + 24 + ki * 5, y + 57, 4, 4);
+  for (let ki = 0; ki < 7; ki++) ctx.fillRect(x + 26 + ki * 5, y + 63, 4, 3);
+}
+
+function drawCharacter(ctx: CanvasRenderingContext2D, agent: AgentRT, frameCount: number) {
+  const { x, y, state, def } = agent;
+  const f = frameCount;
+  const px = Math.round(x - 6);
+  const py = Math.round(y - 11);
+  let legPhase = 0, armPhase = 0;
+  if (state === "walking") { legPhase = Math.sin(f * 0.2) * 3; armPhase = -Math.sin(f * 0.2) * 2; }
+  const typingOffset = state === "typing" ? Math.sin(f * 0.15) * 0.5 : 0;
+  const pyA = py + typingOffset;
+  ctx.fillStyle = "#1a1a1a";
+  ctx.fillRect(px + 2, pyA + 20 + Math.max(0, legPhase), 4, 2);
+  ctx.fillRect(px + 7, pyA + 20 - Math.max(0, -legPhase), 4, 2);
+  ctx.fillStyle = "#1e293b";
+  ctx.fillRect(px + 3, pyA + 15 + legPhase * 0.3, 3, 6);
+  ctx.fillRect(px + 7, pyA + 15 - legPhase * 0.3, 3, 6);
+  ctx.fillStyle = def.shirtColor;
+  ctx.fillRect(px + 2, pyA + 8, 9, 8);
+  ctx.fillStyle = def.shirtColor;
+  if (state === "typing") {
+    ctx.fillRect(px - 1, pyA + 9, 3, 4);
+    ctx.fillRect(px + 11, pyA + 9, 3, 4);
+  } else {
+    ctx.fillRect(px + 1, pyA + 9 + armPhase, 2, 5);
+    ctx.fillRect(px + 10, pyA + 9 - armPhase, 2, 5);
+  }
+  ctx.fillStyle = "#d4a574"; ctx.fillRect(px + 5, pyA + 6, 3, 3);
+  ctx.fillStyle = "#d4a574"; ctx.fillRect(px + 3, pyA + 1, 7, 6);
+  ctx.fillStyle = def.hairColor;
+  ctx.fillRect(px + 3, pyA + 1, 7, 2);
+  ctx.fillRect(px + 3, pyA + 3, 2, 2);
+  ctx.fillRect(px + 8, pyA + 3, 2, 2);
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(px + 4, pyA + 3, 2, 2);
+  ctx.fillRect(px + 7, pyA + 3, 2, 2);
+  ctx.fillStyle = "#000000";
+  ctx.fillRect(px + 5, pyA + 4, 1, 1);
+  ctx.fillRect(px + 8, pyA + 4, 1, 1);
+  ctx.fillStyle = "#7f1d1d";
+  if (state === "talking") ctx.fillRect(px + 5, pyA + 6, 3, 2);
+  else ctx.fillRect(px + 5, pyA + 6, 3, 1);
+}
+
+function drawNameBadge(ctx: CanvasRenderingContext2D, agent: AgentRT) {
+  const desk = DESK_POSITIONS[agent.deskIndex];
+  const bx = desk.x + 4, by = desk.y + 102;
+  ctx.font = "bold 8px monospace";
+  const tw = ctx.measureText(agent.def.name).width;
+  ctx.fillStyle = "#0f0f1f";
+  roundRect(ctx, bx, by, tw + 6, 12, 2); ctx.fill();
+  ctx.strokeStyle = agent.def.shirtColor; ctx.lineWidth = 1;
+  roundRect(ctx, bx, by, tw + 6, 12, 2); ctx.stroke();
+  ctx.fillStyle = agent.def.shirtColor;
+  ctx.fillText(agent.def.name, bx + 3, by + 9);
+}
+
+function wrapText(text: string, maxChars: number): string[] {
+  const words = text.split(" ");
+  const lines: string[] = [];
+  let current = "";
+  for (const w of words) {
+    if ((current + " " + w).trim().length > maxChars) {
+      if (current) lines.push(current);
+      current = w;
+    } else {
+      current = (current + " " + w).trim();
+    }
+    if (lines.length >= 2) break;
+  }
+  if (current && lines.length < 3) lines.push(current);
+  return lines.slice(0, 3);
+}
+
+function drawBubble(ctx: CanvasRenderingContext2D, agent: AgentRT, text: string) {
+  const bx = Math.round(agent.x);
+  const by = Math.round(agent.y - 11);
+  const lines = wrapText(text, 22);
+  ctx.font = "bold 8px monospace";
+  const lineH = 11;
+  const maxW = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 12;
+  const bh = lines.length * lineH + 8;
+  let bubX = bx - maxW / 2;
+  let bubY = by - bh - 14;
+  bubX = Math.max(2, Math.min(W - maxW - 2, bubX));
+  if (bubY < 2) bubY = by + 14;
+  ctx.fillStyle = "#0f0f1f";
+  roundRect(ctx, bubX, bubY, maxW, bh, 4); ctx.fill();
+  ctx.strokeStyle = agent.def.shirtColor; ctx.lineWidth = 2;
+  roundRect(ctx, bubX, bubY, maxW, bh, 4); ctx.stroke();
+  const tailX = Math.max(bubX + 8, Math.min(bubX + maxW - 8, bx));
+  ctx.fillStyle = "#0f0f1f";
+  ctx.beginPath(); ctx.moveTo(tailX - 5, bubY + bh); ctx.lineTo(tailX + 5, bubY + bh); ctx.lineTo(tailX, by - 2); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = agent.def.shirtColor; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(tailX - 5, bubY + bh); ctx.lineTo(tailX, by - 2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(tailX + 5, bubY + bh); ctx.lineTo(tailX, by - 2); ctx.stroke();
+  ctx.fillStyle = "#e2e8f0";
+  for (let li = 0; li < lines.length; li++) ctx.fillText(lines[li], bubX + 6, bubY + 10 + li * lineH);
+}
+
+const AUTO_MESSAGES = ["Hey! Quick question?","Got a minute?","Check this out!","Need your opinion","Bug or feature?","Deploying soon!","PR ready for review","Stand-up in 5?"];
+const AUTO_RESPONSES = ["Sure, what's up?","On it!","Looks good to me","Nice work!","Interesting...","Let me check","Approved!","Almost done!"];
+
+function lerp(a: number, b: number, t: number) { return a + (b - a) * t; }
 
 export default function Home() {
-  const [view, setView] = useState<View>("agents");
-  const [activeAgent, setActiveAgent] = useState<Agent | null>(null);
-  const [histories, setHistories] = useState<Histories>({});
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [search, setSearch] = useState("");
-  const bottomRef = useRef<HTMLDivElement>(null);
-
-  const messages = activeAgent ? (histories[activeAgent.id] || []) : [];
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const agentsRef = useRef<AgentRT[]>([]);
+  const frameRef = useRef(0);
+  const rafRef = useRef<number>(0);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [chatHistories, setChatHistories] = useState<Record<string, { role: "user" | "model"; text: string }[]>>({});
+  const [inputText, setInputText] = useState("");
+  const [sending, setSending] = useState(false);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading]);
+    agentsRef.current = AGENTS.map((def, i) => {
+      const hp = homePos(i);
+      return { def, deskIndex: i, x: hp.x, y: hp.y, tx: hp.x, ty: hp.y, state: "typing" as AgentState, frame: 0, bubble: null, bubbleTick: 0, autoTick: Math.floor(Math.random() * 500 + 100) };
+    });
+  }, []);
 
-  function openChat(agent: Agent) {
-    setActiveAgent(agent);
-    setView("chat");
-  }
-
-  async function send() {
-    if (!input.trim() || loading || !activeAgent) return;
-    const userText = input.trim();
-    setInput("");
-
-    const history = histories[activeAgent.id] || [];
-    const updated = [...history, { role: "user" as const, text: userText }];
-    setHistories((h) => ({ ...h, [activeAgent.id]: updated }));
-    setLoading(true);
-
-    try {
-      const res = await fetch("/api/agent", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: userText, agentId: activeAgent.id, history }),
-      });
-      const data = await res.json();
-      if (data.text) {
-        setHistories((h) => ({
-          ...h,
-          [activeAgent.id]: [...updated, { role: "model", text: data.text }],
-        }));
+  const triggerAutoInteraction = useCallback((agents: AgentRT[]) => {
+    for (const agent of agents) {
+      agent.autoTick--;
+      if (agent.autoTick <= 0 && agent.state === "typing") {
+        const others = agents.filter((a) => a.def.id !== agent.def.id && a.state === "typing");
+        if (others.length === 0) { agent.autoTick = Math.floor(Math.random() * 400 + 350); continue; }
+        const target = others[Math.floor(Math.random() * others.length)];
+        const tpos = homePos(target.deskIndex);
+        agent.state = "walking"; agent.tx = tpos.x + 16; agent.ty = tpos.y;
+        const msg = AUTO_MESSAGES[Math.floor(Math.random() * AUTO_MESSAGES.length)];
+        const resp = AUTO_RESPONSES[Math.floor(Math.random() * AUTO_RESPONSES.length)];
+        setTimeout(() => {
+          agent.state = "talking"; agent.bubble = msg; agent.bubbleTick = 180;
+          setTimeout(() => {
+            target.state = "talking"; target.bubble = resp; target.bubbleTick = 150;
+            setTimeout(() => {
+              const hp = homePos(agent.deskIndex);
+              agent.state = "walking"; agent.tx = hp.x; agent.ty = hp.y;
+              setTimeout(() => { agent.state = "typing"; agent.autoTick = Math.floor(Math.random() * 450 + 350); }, 1200);
+            }, 2000);
+          }, 1000);
+        }, 1500);
       }
-    } finally {
-      setLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    function gameLoop() {
+      if (!ctx) return;
+      const agents = agentsRef.current;
+      frameRef.current++;
+      const fc = frameRef.current;
+      for (const agent of agents) {
+        const dx = agent.tx - agent.x, dy = agent.ty - agent.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > 1) { agent.x = lerp(agent.x, agent.tx, 0.05); agent.y = lerp(agent.y, agent.ty, 0.05); }
+        else { agent.x = agent.tx; agent.y = agent.ty; if (agent.state === "walking") agent.state = "talking"; }
+        if (agent.bubbleTick > 0 && --agent.bubbleTick <= 0) agent.bubble = null;
+        agent.frame++;
+      }
+      if (fc % 60 === 0) triggerAutoInteraction(agents);
+      ctx.clearRect(0, 0, W, H);
+      drawBackground(ctx);
+      for (let i = 0; i < 10; i++) { drawDesk(ctx, i, fc); drawNameBadge(ctx, agents[i]); }
+      const sorted = [...agents].sort((a, b) => a.y - b.y);
+      for (const agent of sorted) drawCharacter(ctx, agent, fc);
+      for (const agent of agents) if (agent.bubble) drawBubble(ctx, agent, agent.bubble);
+      rafRef.current = requestAnimationFrame(gameLoop);
+    }
+    rafRef.current = requestAnimationFrame(gameLoop);
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+  }, [triggerAutoInteraction]);
+
+  function handleCanvasClick(e: React.MouseEvent<HTMLCanvasElement>) {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) * (W / rect.width);
+    const my = (e.clientY - rect.top) * (H / rect.height);
+    let found: AgentRT | null = null;
+    for (const agent of agentsRef.current) {
+      if (mx >= agent.x - 10 && mx <= agent.x + 10 && my >= agent.y - 14 && my <= agent.y + 14) { found = agent; break; }
+    }
+    setSelectedId(found ? found.def.id : null);
   }
 
-  const filtered = AGENTS.filter(
-    (a) =>
-      a.name.toLowerCase().includes(search.toLowerCase()) ||
-      a.tagline.toLowerCase().includes(search.toLowerCase()) ||
-      a.tags.some((t) => t.toLowerCase().includes(search.toLowerCase()))
-  );
+  async function sendMessage() {
+    if (!inputText.trim() || !selectedId || sending) return;
+    const msg = inputText.trim();
+    setInputText(""); setSending(true);
+    const history = chatHistories[selectedId] || [];
+    const newHistory = [...history, { role: "user" as const, text: msg }];
+    setChatHistories((prev) => ({ ...prev, [selectedId]: newHistory }));
+    try {
+      const res = await fetch("/api/agent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: msg, agentId: selectedId, history }) });
+      const data = await res.json();
+      const reply = (data.text as string) || "...";
+      setChatHistories((prev) => ({ ...prev, [selectedId]: [...(prev[selectedId] || []), { role: "model" as const, text: reply }] }));
+      const agent = agentsRef.current.find((a) => a.def.id === selectedId);
+      if (agent) { agent.bubble = reply.slice(0, 60); agent.bubbleTick = 240; agent.state = "talking"; setTimeout(() => { if (agent.state === "talking") agent.state = "typing"; }, 4000); }
+    } catch {
+      setChatHistories((prev) => ({ ...prev, [selectedId]: [...(prev[selectedId] || []), { role: "model" as const, text: "Connection error..." }] }));
+    } finally { setSending(false); }
+  }
+
+  const selectedAgent = AGENTS.find((a) => a.id === selectedId);
+  const chatHistory = selectedId ? chatHistories[selectedId] || [] : [];
 
   return (
-    <div className="min-h-screen bg-[#0d0d0f] text-white font-sans">
-      <nav className="fixed top-0 left-0 right-0 z-50 border-b border-white/5 bg-[#0d0d0f]/80 backdrop-blur-md">
-        <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
-          <button
-            onClick={() => setView("agents")}
-            className="flex items-center gap-2 font-semibold text-base tracking-tight"
-          >
-            <span className="text-xl">🦞</span>
-            <span className="text-white">Gemini</span>
-            <span className="text-purple-400">Agents</span>
-          </button>
-          <div className="flex items-center gap-6 text-sm text-white/50">
-            <button onClick={() => setView("agents")} className={view === "agents" ? "text-white" : "hover:text-white/80 transition-colors"}>
-              Агенты
-            </button>
-            {activeAgent && (
-              <button onClick={() => setView("chat")} className={view === "chat" ? "text-white" : "hover:text-white/80 transition-colors"}>
-                Чат
-              </button>
-            )}
-          </div>
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: "#07071a", fontFamily: "monospace", color: "#e2e8f0", overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 16px", background: "#0f0f2e", borderBottom: "2px solid #1e1e4e", flexShrink: 0 }}>
+        <span style={{ fontSize: 16, fontWeight: "bold", letterSpacing: 1 }}>🦞 Gemini Dev Studio</span>
+        <div style={{ display: "flex", gap: 6, marginLeft: 8 }}>
+          {AGENTS.map((a) => (
+            <div key={a.id} title={a.name} style={{ width: 10, height: 10, borderRadius: "50%", background: a.shirtColor, border: selectedId === a.id ? "2px solid #fff" : "2px solid transparent", cursor: "pointer" }}
+              onClick={() => setSelectedId(selectedId === a.id ? null : a.id)} />
+          ))}
         </div>
-      </nav>
-
-      {view === "agents" && (
-        <div className="pt-14 max-w-7xl mx-auto px-6 py-12">
-          <div className="mb-10">
-            <h1 className="text-4xl font-bold mb-2">Агенты</h1>
-            <p className="text-white/40 text-lg">Выбери персонажа — каждый со своей личностью и специализацией</p>
-          </div>
-
-          <div className="mb-8 relative max-w-md">
-            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30 text-sm">🔍</span>
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Поиск агентов..."
-              className="w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-sm placeholder-white/30 focus:outline-none focus:border-white/20 transition-colors"
-            />
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filtered.map((agent) => {
-              const msgCount = Math.floor((histories[agent.id]?.length || 0) / 2);
-              return (
-                <button
-                  key={agent.id}
-                  onClick={() => openChat(agent)}
-                  className="group relative text-left bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.07] hover:border-white/[0.15] rounded-2xl p-5 transition-all duration-200"
-                >
-                  <div
-                    className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
-                    style={{ boxShadow: `inset 0 0 30px ${agent.color}10` }}
-                  />
-                  <div className="flex items-start justify-between mb-4">
-                    <div
-                      className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl"
-                      style={{ backgroundColor: `${agent.color}20` }}
-                    >
-                      {agent.emoji}
-                    </div>
-                    {msgCount > 0 && (
-                      <span className="text-xs bg-white/10 text-white/50 rounded-full px-2 py-0.5">
-                        {msgCount} сообщ.
-                      </span>
-                    )}
-                  </div>
-                  <h3 className="font-semibold text-base mb-0.5">{agent.name}</h3>
-                  <p className="text-sm mb-3" style={{ color: agent.color }}>{agent.tagline}</p>
-                  <p className="text-white/40 text-xs leading-relaxed mb-4">{agent.description}</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {agent.tags.map((tag) => (
-                      <span
-                        key={tag}
-                        className="text-xs px-2 py-0.5 rounded-full border"
-                        style={{ borderColor: `${agent.color}30`, color: `${agent.color}90` }}
-                      >
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                  <div className="mt-4 pt-4 border-t border-white/[0.05] flex items-center justify-between">
-                    <span className="text-xs text-white/30">gemini-1.5-flash</span>
-                    <span
-                      className="text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity"
-                      style={{ color: agent.color }}
-                    >
-                      Начать →
-                    </span>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-
-          {filtered.length === 0 && (
-            <div className="text-center py-20 text-white/30">
-              <p className="text-4xl mb-3">🔍</p>
-              <p>Ничего не найдено</p>
-            </div>
-          )}
+        <span style={{ marginLeft: "auto", fontSize: 11, color: "#64748b" }}>Click an agent to chat</span>
+      </div>
+      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", padding: 8 }}>
+          <canvas ref={canvasRef} width={W} height={H} onClick={handleCanvasClick}
+            style={{ maxWidth: "100%", maxHeight: "100%", imageRendering: "pixelated", cursor: "crosshair", border: "2px solid #1e1e4e" }} />
         </div>
-      )}
-
-      {view === "chat" && activeAgent && (
-        <div className="pt-14 flex h-screen">
-          <aside className="w-72 border-r border-white/5 bg-[#0d0d0f] flex flex-col pt-4 overflow-y-auto">
-            <div className="px-4 mb-3">
-              <p className="text-xs text-white/30 uppercase tracking-wider font-medium px-2">Агенты</p>
+        {selectedAgent && (
+          <div style={{ width: 320, display: "flex", flexDirection: "column", background: "#0c0c24", borderLeft: `3px solid ${selectedAgent.shirtColor}`, flexShrink: 0 }}>
+            <div style={{ padding: "12px 16px", borderBottom: `2px solid ${selectedAgent.shirtColor}33`, background: "#0f0f2e" }}>
+              <div style={{ fontWeight: "bold", fontSize: 14, color: selectedAgent.shirtColor }}>{selectedAgent.name}</div>
+              <div style={{ fontSize: 11, color: "#64748b" }}>{selectedAgent.role}</div>
             </div>
-            {AGENTS.map((agent) => {
-              const isActive = activeAgent.id === agent.id;
-              const msgCount = Math.floor((histories[agent.id]?.length || 0) / 2);
-              return (
-                <button
-                  key={agent.id}
-                  onClick={() => setActiveAgent(agent)}
-                  className={`flex items-center gap-3 mx-2 px-3 py-2.5 rounded-xl text-left transition-colors ${
-                    isActive ? "bg-white/[0.07]" : "hover:bg-white/[0.04]"
-                  }`}
-                >
-                  <div
-                    className="w-8 h-8 rounded-lg flex items-center justify-center text-base flex-shrink-0"
-                    style={{ backgroundColor: `${agent.color}20` }}
-                  >
-                    {agent.emoji}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between">
-                      <span className={`text-sm font-medium ${isActive ? "text-white" : "text-white/60"}`}>
-                        {agent.name}
-                      </span>
-                      {msgCount > 0 && (
-                        <span className="text-xs text-white/30">{msgCount}</span>
-                      )}
-                    </div>
-                    <p className="text-xs truncate" style={{ color: `${agent.color}70` }}>
-                      {agent.tagline}
-                    </p>
-                  </div>
-                </button>
-              );
-            })}
-            <div className="mt-auto p-4 border-t border-white/5">
-              <button
-                onClick={() => setHistories((h) => ({ ...h, [activeAgent.id]: [] }))}
-                className="w-full text-xs text-white/20 hover:text-red-400 transition-colors py-1"
-              >
-                Очистить историю
-              </button>
-            </div>
-          </aside>
-
-          <main className="flex-1 flex flex-col min-w-0">
-            <div className="px-6 py-4 border-b border-white/5 flex items-center gap-3">
-              <div
-                className="w-9 h-9 rounded-xl flex items-center justify-center text-lg flex-shrink-0"
-                style={{ backgroundColor: `${activeAgent.color}20` }}
-              >
-                {activeAgent.emoji}
-              </div>
-              <div>
-                <h2 className="font-semibold text-sm">{activeAgent.name}</h2>
-                <p className="text-xs" style={{ color: `${activeAgent.color}90` }}>{activeAgent.tagline}</p>
-              </div>
-              <div className="ml-auto flex items-center gap-2">
-                <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
-                <span className="text-xs text-white/30">онлайн</span>
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
-              {messages.length === 0 && (
-                <div className="flex flex-col items-center justify-center h-full text-center">
-                  <div
-                    className="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl mb-4"
-                    style={{ backgroundColor: `${activeAgent.color}15` }}
-                  >
-                    {activeAgent.emoji}
-                  </div>
-                  <h3 className="font-semibold text-lg mb-1">{activeAgent.name}</h3>
-                  <p className="text-white/30 text-sm max-w-xs">{activeAgent.description}</p>
-                  <div className="flex flex-wrap gap-2 mt-4 justify-center">
-                    {activeAgent.tags.map((tag) => (
-                      <span
-                        key={tag}
-                        className="text-xs px-3 py-1 rounded-full border"
-                        style={{ borderColor: `${activeAgent.color}30`, color: `${activeAgent.color}80` }}
-                      >
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {messages.map((msg, i) => (
-                <div key={i} className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : "flex-row"}`}>
-                  {msg.role === "model" && (
-                    <div
-                      className="w-8 h-8 rounded-xl flex items-center justify-center text-sm flex-shrink-0 mt-0.5"
-                      style={{ backgroundColor: `${activeAgent.color}20` }}
-                    >
-                      {activeAgent.emoji}
-                    </div>
-                  )}
-                  <div
-                    className={`max-w-[75%] px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${
-                      msg.role === "user"
-                        ? "bg-white/[0.08] text-white rounded-tr-sm"
-                        : "bg-white/[0.04] border border-white/[0.06] text-white/85 rounded-tl-sm"
-                    }`}
-                  >
-                    {msg.text}
-                  </div>
+            <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+              {chatHistory.length === 0 && <div style={{ color: "#334155", fontSize: 11, textAlign: "center", marginTop: 40 }}>Start a conversation with {selectedAgent.name}</div>}
+              {chatHistory.map((msg, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start" }}>
+                  <div style={{ maxWidth: "80%", padding: "6px 10px", borderRadius: 8, fontSize: 12, lineHeight: 1.4, background: msg.role === "user" ? "#1e3a5f" : "#0f0f2e", border: msg.role === "model" ? `1px solid ${selectedAgent.shirtColor}44` : "none", color: msg.role === "user" ? "#bfdbfe" : "#e2e8f0" }}>{msg.text}</div>
                 </div>
               ))}
-              {loading && (
-                <div className="flex gap-3">
-                  <div
-                    className="w-8 h-8 rounded-xl flex items-center justify-center text-sm flex-shrink-0"
-                    style={{ backgroundColor: `${activeAgent.color}20` }}
-                  >
-                    {activeAgent.emoji}
-                  </div>
-                  <div className="bg-white/[0.04] border border-white/[0.06] px-4 py-3 rounded-2xl rounded-tl-sm">
-                    <div className="flex gap-1.5 items-center">
-                      {[0, 150, 300].map((delay) => (
-                        <span
-                          key={delay}
-                          className="w-1.5 h-1.5 rounded-full animate-bounce"
-                          style={{ backgroundColor: activeAgent.color, animationDelay: `${delay}ms` }}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-              <div ref={bottomRef} />
+              {sending && <div style={{ display: "flex", justifyContent: "flex-start" }}><div style={{ background: "#0f0f2e", border: `1px solid ${selectedAgent.shirtColor}44`, padding: "6px 10px", borderRadius: 8, fontSize: 12, color: "#64748b" }}>...</div></div>}
             </div>
-
-            <div className="px-6 py-4 border-t border-white/5">
-              <div className="flex gap-3 items-end bg-white/[0.04] border border-white/[0.08] rounded-2xl px-4 py-3 focus-within:border-white/20 transition-colors">
-                <textarea
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      send();
-                    }
-                  }}
-                  placeholder={`Напиши ${activeAgent.name}...`}
-                  rows={1}
-                  className="flex-1 bg-transparent text-sm resize-none focus:outline-none placeholder-white/20 text-white/90"
-                  style={{ maxHeight: "120px" }}
-                />
-                <button
-                  onClick={send}
-                  disabled={loading || !input.trim()}
-                  className="flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center transition-all disabled:opacity-20"
-                  style={{ backgroundColor: input.trim() ? activeAgent.color : "transparent", border: `1px solid ${activeAgent.color}40` }}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="22" y1="2" x2="11" y2="13" />
-                    <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                  </svg>
-                </button>
-              </div>
-              <p className="text-xs text-white/20 mt-2 text-center">Enter — отправить · Shift+Enter — новая строка</p>
+            <div style={{ padding: 12, borderTop: `2px solid ${selectedAgent.shirtColor}33`, display: "flex", gap: 8 }}>
+              <input value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+                placeholder="Type a message..." disabled={sending}
+                style={{ flex: 1, background: "#0f0f2e", border: `1px solid ${selectedAgent.shirtColor}44`, borderRadius: 6, padding: "6px 10px", color: "#e2e8f0", fontSize: 12, outline: "none" }} />
+              <button onClick={sendMessage} disabled={sending || !inputText.trim()}
+                style={{ background: selectedAgent.shirtColor, border: "none", borderRadius: 6, padding: "6px 12px", color: "#000", fontWeight: "bold", fontSize: 12, cursor: sending ? "wait" : "pointer", opacity: sending || !inputText.trim() ? 0.5 : 1 }}>
+                {sending ? "..." : "Send"}
+              </button>
             </div>
-          </main>
-        </div>
-      )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
