@@ -1,32 +1,8 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextRequest, NextResponse } from "next/server";
+import { AGENTS } from "@/lib/agents";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-
-const AGENTS = {
-  researcher: {
-    name: "Исследователь",
-    systemPrompt:
-      "Ты агент-исследователь. Анализируй вопросы глубоко, ищи факты, давай структурированные ответы с источниками знаний. Отвечай на языке пользователя.",
-  },
-  writer: {
-    name: "Писатель",
-    systemPrompt:
-      "Ты агент-писатель. Создавай качественные тексты: статьи, посты, описания, письма. Учитывай стиль и аудиторию. Отвечай на языке пользователя.",
-  },
-  coder: {
-    name: "Программист",
-    systemPrompt:
-      "Ты агент-программист. Пиши чистый код, объясняй решения, находи баги. Используй лучшие практики. Отвечай на языке пользователя.",
-  },
-  analyst: {
-    name: "Аналитик",
-    systemPrompt:
-      "Ты агент-аналитик. Анализируй данные, выявляй паттерны, делай выводы и давай рекомендации. Отвечай на языке пользователя.",
-  },
-};
-
-export type AgentId = keyof typeof AGENTS;
 
 export async function POST(req: NextRequest) {
   try {
@@ -36,14 +12,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "message and agentId required" }, { status: 400 });
     }
 
-    const agent = AGENTS[agentId as AgentId];
+    const agent = AGENTS.find((a) => a.id === agentId);
     if (!agent) {
       return NextResponse.json({ error: "Unknown agent" }, { status: 400 });
     }
 
     const model = genAI.getGenerativeModel({
       model: "gemini-1.5-flash",
-      systemInstruction: agent.systemPrompt,
+      systemInstruction: agent.soul,
     });
 
     const chat = model.startChat({

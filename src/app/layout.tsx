@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Gemini Agents",
-  description: "Multi-agent web app powered by Google Gemini",
+  description: "Multi-agent AI app powered by Google Gemini",
 };
 
 export default function RootLayout({
