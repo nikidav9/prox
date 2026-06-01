@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
     }
 
     const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
+      model: "gemini-2.5-flash-lite",
       systemInstruction: agent.soul,
     });
 
@@ -34,7 +34,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ text, agentName: agent.name });
   } catch (err) {
-    console.error(err);
-    return NextResponse.json({ error: "Agent error" }, { status: 500 });
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("Agent error:", msg);
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
