@@ -178,6 +178,20 @@ async function consultAgent(targetId: string, question: string, githubToken: str
   }
 }
 
+// ── Debug endpoint ────────────────────────────────────────────────────────────
+export async function GET() {
+  const now = Date.now();
+  return NextResponse.json({
+    version: 4,
+    pool: MODEL_POOL.map(m => ({
+      id: m.id,
+      model: m.model,
+      available: (cooldowns.get(m.id) ?? 0) <= now,
+      cooldownUntil: cooldowns.get(m.id) ? new Date(cooldowns.get(m.id)!).toISOString() : null,
+    })),
+  });
+}
+
 // ── Main handler ──────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   try {
@@ -329,9 +343,11 @@ export async function POST(req: NextRequest) {
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error("Agent error:", msg);
-    const retryMatch = msg.match(/retry in ([\d.]+)s/i);
-    const retryAfter = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) : null;
-    return NextResponse.json({ error: msg, retryAfter }, { status: retryAfter ? 429 : 500 });
+    console.error("[agent] outer catch:", msg);
+    // If it's a rate limit error that escaped the pool loop, return 429 not 500
+    const isRate = msg.includes("429") || msg.includes("quota") || msg.includes("rate_limit") || msg.includes("RESOURCE_EXHAUSTED");
+    const retryMatch = msg.match(/try again in (\d+)m/i) || msg.match(/retry in ([\d.]+)s/i);
+    const retryAfter = retryMatch ? (msg.includes("m") ? parseInt(retryMatch[1]) * 60 : Math.ceil(parseFloat(retryMatch[1]))) : null;
+    return NextResponse.json({ error: msg, retryAfter }, { status: isRate ? 429 : 500 });
   }
 }
