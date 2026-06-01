@@ -14,18 +14,17 @@ type Provider = "gemini" | "groq";
 interface ModelEntry { id: string; provider: Provider; model: string }
 
 const MODEL_POOL: ModelEntry[] = [
-  { id: "gemini-2.0-flash",        provider: "gemini", model: "gemini-2.0-flash" },
-  { id: "gemini-1.5-flash",        provider: "gemini", model: "gemini-1.5-flash" },
-  { id: "groq-llama33-70b",        provider: "groq",   model: "llama-3.3-70b-versatile" },
-  { id: "groq-llama31-8b",         provider: "groq",   model: "llama-3.1-8b-instant" },
-  { id: "groq-gemma2-9b",          provider: "groq",   model: "gemma2-9b-it" },
-  { id: "groq-deepseek-70b",       provider: "groq",   model: "deepseek-r1-distill-llama-70b" },
-  { id: "groq-qwen-32b",           provider: "groq",   model: "qwen-qwq-32b" },
-  { id: "groq-llama3-70b",         provider: "groq",   model: "llama3-70b-8192" },
-  { id: "groq-llama31-70b",        provider: "groq",   model: "llama-3.1-70b-versatile" },
+  { id: "gemini-2.0-flash",   provider: "gemini", model: "gemini-2.0-flash" },
+  { id: "gemini-1.5-flash",   provider: "gemini", model: "gemini-1.5-flash" },
+  { id: "groq-llama33-70b",   provider: "groq",   model: "llama-3.3-70b-versatile" },
+  { id: "groq-llama31-8b",    provider: "groq",   model: "llama-3.1-8b-instant" },
+  { id: "groq-gemma2-9b",     provider: "groq",   model: "gemma2-9b-it" },
+  { id: "groq-deepseek-70b",  provider: "groq",   model: "deepseek-r1-distill-llama-70b" },
+  { id: "groq-qwen-32b",      provider: "groq",   model: "qwen-qwq-32b" },
+  { id: "groq-llama3-70b",    provider: "groq",   model: "llama3-70b-8192" },
+  { id: "groq-llama31-70b",   provider: "groq",   model: "llama-3.1-70b-versatile" },
 ];
 
-// In-memory cooldown: modelId → timestamp when it's available again
 const cooldowns = new Map<string, number>();
 
 function availableModels(): ModelEntry[] {
@@ -58,7 +57,7 @@ async function compressHistory(messages: ChatMsg[]): Promise<ChatMsg[]> {
   const compressMsg = [{ role: "user" as const, content: `${summaryPrefix}Сделай краткое техническое резюме этого диалога (3-7 пунктов, только факты и решения, без воды):\n\n${dialog}` }];
   try {
     let res;
-    for (const m of ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "gemma2-9b-it"]) {
+    for (const m of ["llama-3.1-8b-instant", "gemma2-9b-it", "llama-3.3-70b-versatile"]) {
       try { res = await groq.chat.completions.create({ model: m, messages: compressMsg, max_tokens: 300 }); break; }
       catch { /* try next */ }
     }
@@ -130,7 +129,6 @@ const GITHUB_TOOLS: Tool[] = [{
   ],
 }];
 
-// Groq tool definitions (OpenAI format)
 function buildGroqTools(hasGithub: boolean) {
   return [
     { type: "function" as const, function: { name: "consult_agent", description: "Ask a colleague agent a specific question", parameters: { type: "object", properties: { agentId: { type: "string", description: `Agent ID, one of: ${AGENTS.map(a=>a.id).join(", ")}` }, question: { type: "string" } }, required: ["agentId","question"] } } },
@@ -147,7 +145,6 @@ function buildGroqTools(hasGithub: boolean) {
   ];
 }
 
-// ── Inter-agent communication ─────────────────────────────────────────────────
 async function consultAgent(targetId: string, question: string, githubToken: string, depth: number): Promise<string> {
   if (depth >= 2) return "[максимальная глубина цепочки достигнута]";
   const target = AGENTS.find(a => a.id === targetId);
@@ -166,14 +163,12 @@ async function consultAgent(targetId: string, question: string, githubToken: str
   }
 }
 
-// ── Debug endpoint ────────────────────────────────────────────────────────────
 export async function GET() {
   const now = Date.now();
   return NextResponse.json({
-    version: 5,
+    version: 6,
     pool: MODEL_POOL.map(m => ({
-      id: m.id,
-      model: m.model,
+      id: m.id, model: m.model,
       available: (cooldowns.get(m.id) ?? 0) <= now,
       cooldownUntil: cooldowns.get(m.id) ? new Date(cooldowns.get(m.id)!).toISOString() : null,
     })),
@@ -181,7 +176,6 @@ export async function GET() {
   });
 }
 
-// ── Main handler ──────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   try {
     const { message, agentId, history, githubToken: clientToken, _depth = 0 } = await req.json();
@@ -212,36 +206,18 @@ export async function POST(req: NextRequest) {
     let lastError = "";
     let usedProvider = "";
 
-    const pool = availableModels();
-
-    for (const entry of pool) {
+    for (const entry of availableModels()) {
       try {
         if (entry.provider === "gemini") {
           const gModel = genAI.getGenerativeModel({
-            model: entry.model,
-            systemInstruction,
+            model: entry.model, systemInstruction,
             tools: hasGithub ? GITHUB_TOOLS : [],
           });
           const chat = gModel.startChat({
             history: trimmedHistory.map(msg => ({ role: msg.role, parts: [{ text: msg.text }] })),
           });
-
-          const geminiSend = async (payload: Parameters<typeof chat.sendMessage>[0]) => {
-            for (let attempt = 0; attempt < 2; attempt++) {
-              try {
-                return await chat.sendMessage(payload, { generationConfig: { maxOutputTokens: 800 } } as never);
-              } catch (err) {
-                const m = String(err);
-                const match = m.match(/retry in ([\d.]+)s/i);
-                const waitMs = match ? Math.ceil(parseFloat(match[1]) * 1000) : 0;
-                if (attempt < 1 && waitMs > 0 && waitMs <= 15_000) await new Promise(r => setTimeout(r, waitMs));
-                else throw err;
-              }
-            }
-            throw new Error("Max retries");
-          };
-
-          let result = await geminiSend(message);
+          // No retries — fail fast and move to next model
+          let result = await chat.sendMessage(message, { generationConfig: { maxOutputTokens: 800 } } as never);
           for (let i = 0; i < 8; i++) {
             const parts = result.response.candidates?.[0]?.content?.parts ?? [];
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -254,32 +230,28 @@ export async function POST(req: NextRequest) {
               githubActions.push(`${fc.name}: ${JSON.stringify(toolResult).slice(0, 150)}`);
               return { functionResponse: { name: fc.name, response: toolResult } };
             }));
-            result = await geminiSend(responses as Parameters<typeof chat.sendMessage>[0]);
+            result = await chat.sendMessage(responses as Parameters<typeof chat.sendMessage>[0], { generationConfig: { maxOutputTokens: 800 } } as never);
           }
           text = result.response.text();
           usedProvider = entry.id;
           break;
 
         } else if (entry.provider === "groq" && groq) {
-          const groqTools = buildGroqTools(hasGithub);
           const groqMessages: Groq.Chat.ChatCompletionMessageParam[] = [
             { role: "system", content: systemInstruction },
             ...groqHistory,
             { role: "user", content: message },
           ];
+          const groqTools = buildGroqTools(hasGithub);
 
           for (let round = 0; round < 6; round++) {
             const groqRes = await groq.chat.completions.create({
-              model: entry.model,
-              messages: groqMessages,
-              max_tokens: 1024,
-              tools: groqTools,
-              tool_choice: "auto",
+              model: entry.model, messages: groqMessages,
+              max_tokens: 1024, tools: groqTools, tool_choice: "auto",
             });
             const choice = groqRes.choices[0];
             const msg = choice.message;
             groqMessages.push(msg as Groq.Chat.ChatCompletionMessageParam);
-
             if (!msg.tool_calls || msg.tool_calls.length === 0) {
               text = msg.content || "Нет ответа";
               break;
@@ -322,8 +294,7 @@ export async function POST(req: NextRequest) {
     await saveHistory(agentId, [...compressedHistory, userMsg, botMsg]);
 
     return NextResponse.json({
-      text,
-      agentName: agent.name,
+      text, agentName: agent.name,
       githubActions: githubActions.length ? githubActions : undefined,
       provider: usedProvider,
     });
