@@ -290,6 +290,51 @@ function loadFromStorage<T>(key:string,fallback:T):T{
   try{const s=localStorage.getItem(key);return s?JSON.parse(s):fallback;}catch{return fallback;}
 }
 
+// IndexedDB helpers
+const IDB_DB = 'dev-office-v1';
+const IDB_STORE = 'tasks';
+
+function idbOpen(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_DB, 1);
+    req.onupgradeneeded = e => {
+      (e.target as IDBOpenDBRequest).result.createObjectStore(IDB_STORE, { keyPath: 'id' });
+    };
+    req.onsuccess = e => resolve((e.target as IDBOpenDBRequest).result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbPut(task: object) {
+  const db = await idbOpen();
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    const req = tx.objectStore(IDB_STORE).put(task);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbGetAll(): Promise<Record<string, unknown>[]> {
+  const db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const req = tx.objectStore(IDB_STORE).getAll();
+    req.onsuccess = () => resolve((req.result as Record<string, unknown>[]));
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbDelete(id: string) {
+  const db = await idbOpen();
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    const req = tx.objectStore(IDB_STORE).delete(id);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
 export default function Home(){
   const canvasRef=useRef<HTMLCanvasElement>(null);
   const agentsRef=useRef<AgentRT[]>([]);
@@ -310,6 +355,53 @@ export default function Home(){
   );
   const [showSettings,setShowSettings]=useState(false);
   const [tokenInput,setTokenInput]=useState("");
+  const [showTeamChat,setShowTeamChat]=useState(false);
+  const [teamDiscussion,setTeamDiscussion]=useState<{agentId:string;agentName:string;role:string;text:string}[]>([]);
+  const [teamTopic,setTeamTopic]=useState("");
+  const [teamLoading,setTeamLoading]=useState(false);
+
+  // Service Worker registration
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').then(() => {
+        // Listen for messages from SW
+        navigator.serviceWorker.addEventListener('message', (event) => {
+          if (event.data?.type === 'TASK_DONE') {
+            const { agentId, result } = event.data;
+            const reply = (result.text as string) || '...';
+            const acts: string[] | undefined = result.githubActions;
+            setChatHistories(p => ({
+              ...p,
+              [agentId]: [...(p[agentId] || []), { role: 'model' as const, text: reply, ...(acts ? { githubActions: acts } : {}) }],
+            }));
+          }
+        });
+      }).catch(() => {});
+    }
+  }, []);
+
+  // Check IndexedDB for tasks completed by SW while tab was closed
+  useEffect(() => {
+    idbGetAll().then(tasks => {
+      for (const task of tasks) {
+        if (task.status === 'done' && task.result) {
+          const result = task.result as { text?: string; githubActions?: string[] };
+          const reply = result.text || '...';
+          const acts = result.githubActions;
+          setChatHistories(p => {
+            const existing = p[task.agentId as string] || [];
+            const last = existing[existing.length - 1];
+            if (last?.role === 'model' && last.text === reply) return p;
+            return {
+              ...p,
+              [task.agentId as string]: [...existing, { role: 'model' as const, text: reply, ...(acts ? { githubActions: acts } : {}) }],
+            };
+          });
+          idbDelete(task.id as string);
+        }
+      }
+    }).catch(() => {});
+  }, []);
 
   // Persist chat histories
   useEffect(()=>{
@@ -396,6 +488,24 @@ export default function Home(){
     const ag=agentsRef.current.find(a=>a.def.id===agentId);
     if(ag){ag.state="type";ag.dir=SEATS[ag.seatI].dir;ag.busy=true;ag.bubble=null;}
 
+    const taskId = `${agentId}-${Date.now()}`;
+    const apiHistory=history
+      .filter(m=>m.role==="user"||m.role==="model")
+      .map(m=>({role:m.role as "user"|"model",text:m.text}));
+    await idbPut({ id: taskId, agentId, message: msg, history: apiHistory, githubToken, status: 'pending', createdAt: Date.now() });
+    // Register background sync
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.ready.then(reg => {
+        if ('sync' in reg) {
+          (reg as ServiceWorkerRegistration & { sync: { register: (tag: string) => Promise<void> } }).sync.register('process-tasks').catch(() => {
+            navigator.serviceWorker.controller?.postMessage({ type: 'PROCESS_NOW' });
+          });
+        } else {
+          navigator.serviceWorker.controller?.postMessage({ type: 'PROCESS_NOW' });
+        }
+      });
+    }
+
     const willConsult=ag&&Math.random()<0.3;
     let consultTarget:AgentRT|null=null;
     let consultDone=false;
@@ -421,12 +531,10 @@ export default function Home(){
     }
 
     try{
-      const apiHistory=history
-        .filter(m=>m.role==="user"||m.role==="model")
-        .map(m=>({role:m.role as "user"|"model",text:m.text}));
       const res=await fetch("/api/agent",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({message:msg,agentId,history:apiHistory,githubToken})});
       const data=await res.json();
+      await idbDelete(taskId);
       const reply=(data.text as string)||"...";
       const acts:string[]|undefined=data.githubActions;
       const showReply=()=>{
@@ -498,6 +606,22 @@ export default function Home(){
     setChatHistories(p=>{const n={...p};delete n[agentId];return n;});
   }
 
+  async function startTeamDiscussion() {
+    if (!teamTopic.trim() || teamLoading) return;
+    setTeamLoading(true);
+    setTeamDiscussion([]);
+    try {
+      const res = await fetch('/api/team', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic: teamTopic }),
+      });
+      const data = await res.json();
+      if (data.messages) setTeamDiscussion(data.messages);
+    } catch {}
+    setTeamLoading(false);
+  }
+
   const selAgent=AGENTS.find(a=>a.id===selectedId);
   const chatHist=selectedId?chatHistories[selectedId]||[]:[];
   const hasGithub=!!githubToken;
@@ -522,6 +646,11 @@ export default function Home(){
           <span style={{fontSize:9,color:hasGithub?"#5a9a5a":"#7a6830"}}>
             {hasGithub?"GitHub подключён":"GitHub не настроен"}
           </span>
+          <button onClick={()=>setShowTeamChat(!showTeamChat)}
+            style={{background:showTeamChat?"#2a1a3a":"#1a0a2a",border:"1px solid #5a3a8a",borderRadius:4,
+              padding:"2px 8px",color:"#c084fc",fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>
+            Команда
+          </button>
           <button onClick={()=>{setShowSettings(!showSettings);setTokenInput(githubToken);}}
             style={{background:showSettings?"#3a3010":"#2a2008",border:"1px solid #3a3010",borderRadius:4,
               padding:"2px 8px",color:"#D4A843",fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>
@@ -558,7 +687,68 @@ export default function Home(){
               border:"3px solid #3a3010",boxShadow:"0 0 20px rgba(0,0,0,0.5)"}}/>
         </div>
 
-        {selAgent&&(
+        {/* Team Chat Panel */}
+        {showTeamChat&&(
+          <div style={{width:340,display:"flex",flexDirection:"column",background:"#120a1e",
+            borderLeft:"3px solid #5a3a8a",flexShrink:0}}>
+            <div style={{padding:"8px 12px",borderBottom:"2px solid #3a2060",background:"#1a0a2a",display:"flex",alignItems:"center",gap:8}}>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:"bold",fontSize:13,color:"#c084fc"}}>Командный чат</div>
+                <div style={{fontSize:9,color:"#7a5a9a"}}>Обсуждение всей командой</div>
+              </div>
+              <button onClick={()=>setShowTeamChat(false)}
+                style={{background:"#2a1a3a",border:"1px solid #5a3a8a",borderRadius:3,
+                  padding:"2px 6px",color:"#c084fc",fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>✕</button>
+            </div>
+            <div style={{padding:8,borderBottom:"1px solid #3a2060",display:"flex",gap:6}}>
+              <input value={teamTopic} onChange={e=>setTeamTopic(e.target.value)}
+                onKeyDown={e=>e.key==="Enter"&&startTeamDiscussion()}
+                placeholder="Тема для обсуждения..."
+                disabled={teamLoading}
+                style={{flex:1,background:"#1a0a2a",border:"1px solid #5a3a8a",borderRadius:5,
+                  padding:"5px 9px",color:"#d4b8f0",fontSize:11,outline:"none",fontFamily:"inherit"}}/>
+              <button onClick={startTeamDiscussion} disabled={teamLoading||!teamTopic.trim()}
+                style={{background:"#5a3a8a",border:"none",borderRadius:5,padding:"5px 11px",
+                  color:"#fff",fontWeight:"bold",fontSize:12,cursor:teamLoading?"wait":"pointer",
+                  opacity:teamLoading||!teamTopic.trim()?0.5:1,fontFamily:"inherit"}}>
+                {teamLoading?"…":"→"}
+              </button>
+            </div>
+            <div style={{flex:1,overflowY:"auto",padding:8,display:"flex",flexDirection:"column",gap:6}}>
+              {teamDiscussion.length===0&&!teamLoading&&(
+                <div style={{color:"#4a2a6a",fontSize:10,textAlign:"center",marginTop:40,lineHeight:1.6}}>
+                  Введи тему и вся команда обсудит её<br/>
+                  <span style={{color:"#6a4a8a"}}>на русском языке</span>
+                </div>
+              )}
+              {teamLoading&&(
+                <div style={{color:"#7a5a9a",fontSize:10,textAlign:"center",marginTop:40}}>
+                  Команда обсуждает...
+                </div>
+              )}
+              {teamDiscussion.map((m,i)=>{
+                const agentDef=AGENTS.find(a=>a.id===m.agentId);
+                const color=agentDef?.shirtColor||"#c084fc";
+                return(
+                  <div key={i} style={{display:"flex",flexDirection:"column",gap:2}}>
+                    <div style={{display:"flex",alignItems:"center",gap:5}}>
+                      <div style={{width:8,height:8,borderRadius:"50%",background:color,flexShrink:0}}/>
+                      <span style={{fontSize:9,color:color,fontWeight:"bold"}}>{m.agentName}</span>
+                      <span style={{fontSize:8,color:"#5a4a7a"}}>{m.role}</span>
+                    </div>
+                    <div style={{padding:"5px 9px",borderRadius:6,fontSize:11,lineHeight:1.5,
+                      background:"#1a0a2a",border:`1px solid ${color}44`,
+                      color:"#d4b8f0",whiteSpace:"pre-wrap",wordBreak:"break-word",marginLeft:13}}>
+                      {m.text}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {selAgent&&!showTeamChat&&(
           <div style={{width:310,display:"flex",flexDirection:"column",background:"#1a1208",
             borderLeft:`3px solid ${selAgent.shirtColor}`,flexShrink:0}}>
             <div style={{padding:"8px 12px",borderBottom:`2px solid ${selAgent.shirtColor}44`,background:"#221a0a",display:"flex",alignItems:"center",gap:8}}>
