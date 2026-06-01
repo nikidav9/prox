@@ -772,35 +772,13 @@ export default function Home(){
         }else{navigator.serviceWorker.controller?.postMessage({type:'PROCESS_NOW'});}
       });
     }
-    const willConsult=ag&&Math.random()<0.3;
-    let consultTarget:AgentRT|null=null;
-    let consultDone=false;
-    if(willConsult&&ag){
-      const others=agentsRef.current.filter(o=>o.def.id!==ag.def.id&&!o.busy);
-      if(others.length>0){
-        consultTarget=others[Math.floor(Math.random()*others.length)];
-        const ts=SEATS[consultTarget.seatI];
-        const adj=[{x:ts.tx+1,y:ts.ty},{x:ts.tx-1,y:ts.ty},{x:ts.tx,y:ts.ty+1},{x:ts.tx,y:ts.ty-1}]
-          .filter(p=>p.x>0&&p.y>0&&p.x<COLS-1&&p.y<ROWS-1&&WALKABLE[p.y][p.x]);
-        const dest=adj.length>0?adj[0]:{x:ts.tx,y:ts.ty};
-        setTimeout(()=>{
-          if(!ag||!consultTarget)return;
-          walkTo(ag,dest.x,dest.y,()=>{
-            if(!ag||!consultTarget)return;
-            ag.state="talk";ag.dir=dirBetween(ag.tileX,ag.tileY,ts.tx,ts.ty);
-            ag.bubble="Нужна твоя помощь...";ag.bubbleT=3;
-            consultTarget.state="type";consultTarget.busy=true;consultTarget.bubble="Смотрю!";consultTarget.bubbleT=2;
-            setTimeout(()=>{if(!ag)return;returnToSeat(ag,"type");consultDone=true;},3200);
-          });
-        },1200);
-      }
-    }
+    const consultDone=false;
     try{
       const res=await fetch("/api/agent",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({message:msg,agentId,history:apiHistory,githubToken})});
       const data=await res.json();
       await idbDelete(taskId);
-      const reply=(data.text as string)||"...";
+      const reply=(data.text as string)||(data.error?`⚠️ Ошибка: ${data.error}`:"⚠️ Нет ответа от агента");
       const acts:string[]|undefined=data.githubActions;
       const showReply=()=>{
         setChatHistories(p=>{
@@ -813,15 +791,13 @@ export default function Home(){
             if(ag.tileX===SEATS[ag.seatI].tx&&ag.tileY===SEATS[ag.seatI].ty){
               ag.state="idle";ag.dir=SEATS[ag.seatI].dir;ag.busy=false;
             }else returnToSeat(ag,"idle");
-            if(consultTarget&&!consultDone){consultTarget.state="idle";consultTarget.busy=false;}
           },5000);
         }
       };
-      if(willConsult&&!consultDone)setTimeout(showReply,2200);else showReply();
+      showReply();
     }catch{
-      setChatHistories(p=>({...p,[agentId]:[...(p[agentId]||[]),{role:"model",text:"Ошибка соединения..."}]}));
+      setChatHistories(p=>({...p,[agentId]:[...(p[agentId]||[]),{role:"model",text:"⚠️ Ошибка соединения, попробуй ещё раз"}]}));
       if(ag){ag.state="idle";ag.busy=false;}
-      if(consultTarget){consultTarget.state="idle";consultTarget.busy=false;}
     }finally{
       sendingRef.current.delete(agentId);
       setSendingIds(s=>{const n=new Set(s);n.delete(agentId);return n;});
