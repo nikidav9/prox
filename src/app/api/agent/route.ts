@@ -73,6 +73,21 @@ async function runGithubTool(name: string, args: Record<string, unknown>, token:
   }
 }
 
+const CONSULT_TOOL: Tool = {
+  functionDeclarations: [{
+    name: "consult_agent",
+    description: "Ask a colleague agent a specific question and get their expert answer",
+    parameters: {
+      type: SchemaType.OBJECT,
+      properties: {
+        agentId: { type: SchemaType.STRING, description: "Agent ID to consult (e.g. frontend, backend, devops)" },
+        question: { type: SchemaType.STRING, description: "Specific question for the agent" },
+      },
+      required: ["agentId", "question"],
+    },
+  }],
+};
+
 const GITHUB_TOOLS: Tool[] = [{
   functionDeclarations: [
     {
@@ -183,9 +198,30 @@ const GITHUB_TOOLS: Tool[] = [{
   ],
 }];
 
+// Call another agent and get their response (depth-limited to prevent loops)
+async function consultAgent(targetId: string, question: string, githubToken: string, depth: number): Promise<string> {
+  if (depth >= 1) return "[нельзя цепочка консультаций больше 1 уровня]";
+  const target = AGENTS.find(a => a.id === targetId);
+  if (!target) return `[агент ${targetId} не найден]`;
+  try {
+    const baseUrl = process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : "http://localhost:3000";
+    const res = await fetch(`${baseUrl}/api/agent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: question, agentId: targetId, history: [], githubToken, _depth: depth + 1 }),
+    });
+    const data = await res.json();
+    return data.text || "[нет ответа]";
+  } catch {
+    return "[ошибка консультации]";
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const { message, agentId, history, githubToken: clientToken } = await req.json();
+    const { message, agentId, history, githubToken: clientToken, _depth = 0 } = await req.json();
     if (!message || !agentId)
       return NextResponse.json({ error: "message and agentId required" }, { status: 400 });
 
@@ -195,15 +231,16 @@ export async function POST(req: NextRequest) {
 
     const githubToken = clientToken?.trim() || process.env.GITHUB_TOKEN || "";
     const hasGithub = !!githubToken;
-    const systemInstruction = agent.soul +
-      (hasGithub
-        ? "\n\nУ тебя есть доступ к GitHub через инструменты. Используй их для реальной работы: создавай репозитории, файлы, ветки, задачи. Когда тебя просят что-то сделать в GitHub — делай сразу через инструменты, не просто объясняй. Сначала всегда вызывай github_get_user чтобы знать логин пользователя."
-        : "");
+
+    const agentList = AGENTS.map(a => `${a.id} — ${a.name} (${a.role})`).join("\n");
+    const systemInstruction = agent.soul
+      + (hasGithub ? "\n\nУ тебя есть доступ к GitHub через инструменты. Делай сразу через инструменты, сначала вызывай github_get_user." : "")
+      + `\n\nТЫ МОЖЕШЬ КОНСУЛЬТИРОВАТЬСЯ С КОЛЛЕГАМИ через инструмент consult_agent.\nСписок агентов:\n${agentList}\nИспользуй когда задача явно требует экспертизы другого специалиста. Передавай конкретный вопрос, не весь контекст.`;
 
     const model = genAI.getGenerativeModel({
       model: "gemini-2.0-flash",
       systemInstruction,
-      ...(hasGithub ? { tools: GITHUB_TOOLS } : {}),
+      ...({ tools: [...GITHUB_TOOLS, CONSULT_TOOL] }),
     });
 
     const chat = model.startChat({
@@ -237,7 +274,7 @@ export async function POST(req: NextRequest) {
     try {
       let result = await sendWithRetry(message);
 
-      for (let i = 0; i < 6 && hasGithub; i++) {
+      for (let i = 0; i < 8; i++) {
         const parts = result.response.candidates?.[0]?.content?.parts ?? [];
         const calls = parts.filter((p) => p.functionCall);
         if (calls.length === 0) break;
@@ -245,9 +282,16 @@ export async function POST(req: NextRequest) {
         const responses = await Promise.all(
           calls.map(async (part) => {
             const fc = part.functionCall!;
-            const toolResult = await runGithubTool(fc.name, fc.args as Record<string, unknown>, githubToken);
-            const summary = JSON.stringify(toolResult);
-            githubActions.push(`${fc.name}: ${summary.slice(0, 150)}`);
+            let toolResult: object;
+            if (fc.name === "consult_agent") {
+              const args = fc.args as Record<string, unknown>;
+              const reply = await consultAgent(String(args.agentId), String(args.question), githubToken, _depth);
+              toolResult = { reply };
+              githubActions.push(`👥 ${args.agentId}: ${reply.slice(0, 120)}`);
+            } else {
+              toolResult = await runGithubTool(fc.name, fc.args as Record<string, unknown>, githubToken);
+              githubActions.push(`${fc.name}: ${JSON.stringify(toolResult).slice(0, 150)}`);
+            }
             return { functionResponse: { name: fc.name, response: toolResult } };
           })
         );
@@ -266,8 +310,10 @@ export async function POST(req: NextRequest) {
           content: m.text,
         }));
 
-        // GitHub tools in OpenAI format for Groq
-        const groqTools = hasGithub ? [
+        // Tools for Groq (GitHub + consult_agent)
+        const groqTools = [
+          { type: "function" as const, function: { name: "consult_agent", description: "Ask a colleague agent", parameters: { type: "object", properties: { agentId: { type: "string", description: `Agent ID, one of: ${AGENTS.map(a=>a.id).join(", ")}` }, question: { type: "string" } }, required: ["agentId","question"] } } },
+          ...(hasGithub ? [
           { type: "function" as const, function: { name: "github_get_user", description: "Get authenticated GitHub user", parameters: { type: "object", properties: {} } } },
           { type: "function" as const, function: { name: "github_list_repos", description: "List user repos", parameters: { type: "object", properties: {} } } },
           { type: "function" as const, function: { name: "github_create_repo", description: "Create a new repo", parameters: { type: "object", properties: { name: { type: "string" }, description: { type: "string" }, private: { type: "boolean" }, auto_init: { type: "boolean" } }, required: ["name"] } } },
@@ -276,7 +322,7 @@ export async function POST(req: NextRequest) {
           { type: "function" as const, function: { name: "github_list_files", description: "List files in repo", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, path: { type: "string" } }, required: ["owner", "repo"] } } },
           { type: "function" as const, function: { name: "github_list_issues", description: "List open issues", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" } }, required: ["owner", "repo"] } } },
           { type: "function" as const, function: { name: "github_create_issue", description: "Create an issue", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, title: { type: "string" }, body: { type: "string" } }, required: ["owner", "repo", "title"] } } },
-        ] : undefined;
+        ] : [])];
 
         const groqMessages: Groq.Chat.ChatCompletionMessageParam[] = [
           { role: "system", content: systemInstruction },
@@ -290,7 +336,8 @@ export async function POST(req: NextRequest) {
             model: "llama-3.3-70b-versatile",
             messages: groqMessages,
             max_tokens: 1024,
-            ...(groqTools ? { tools: groqTools, tool_choice: "auto" } : {}),
+            tools: groqTools,
+            tool_choice: "auto",
           });
           const choice = groqRes.choices[0];
           const msg = choice.message;
@@ -304,9 +351,15 @@ export async function POST(req: NextRequest) {
           // Execute each tool call
           for (const tc of msg.tool_calls) {
             const args = JSON.parse(tc.function.arguments || "{}");
-            const toolResult = await runGithubTool(tc.function.name, args, githubToken);
-            const summary = JSON.stringify(toolResult);
-            githubActions.push(`${tc.function.name}: ${summary.slice(0, 150)}`);
+            let toolResult: object;
+            if (tc.function.name === "consult_agent") {
+              const reply = await consultAgent(String(args.agentId), String(args.question), githubToken, _depth);
+              toolResult = { reply };
+              githubActions.push(`👥 ${args.agentId}: ${reply.slice(0, 120)}`);
+            } else {
+              toolResult = await runGithubTool(tc.function.name, args, githubToken);
+              githubActions.push(`${tc.function.name}: ${JSON.stringify(toolResult).slice(0, 150)}`);
+            }
             groqMessages.push({
               role: "tool",
               tool_call_id: tc.id,
