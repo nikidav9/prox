@@ -16,7 +16,6 @@ interface ModelEntry { id: string; provider: Provider; model: string }
 const MODEL_POOL: ModelEntry[] = [
   { id: "gemini-2.0-flash",        provider: "gemini", model: "gemini-2.0-flash" },
   { id: "gemini-1.5-flash",        provider: "gemini", model: "gemini-1.5-flash" },
-  { id: "gemini-1.5-flash-8b",     provider: "gemini", model: "gemini-1.5-flash-8b" },
   { id: "groq-llama33-70b",        provider: "groq",   model: "llama-3.3-70b-versatile" },
   { id: "groq-llama31-8b",         provider: "groq",   model: "llama-3.1-8b-instant" },
   { id: "groq-gemma2-9b",          provider: "groq",   model: "gemma2-9b-it" },
@@ -154,7 +153,7 @@ async function consultAgent(targetId: string, question: string, githubToken: str
   const target = AGENTS.find(a => a.id === targetId);
   if (!target) return `[агент не найден: ${targetId}. Доступные id: ${AGENTS.map(a=>a.id).join(", ")}]`;
   try {
-    const baseUrl = process.env.APP_URL || "https://prox-two-zeta.vercel.app";
+    const baseUrl = process.env.APP_URL || "https://gemini-agents-mocha.vercel.app";
     const res = await fetch(`${baseUrl}/api/agent`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -171,13 +170,14 @@ async function consultAgent(targetId: string, question: string, githubToken: str
 export async function GET() {
   const now = Date.now();
   return NextResponse.json({
-    version: 4,
+    version: 5,
     pool: MODEL_POOL.map(m => ({
       id: m.id,
       model: m.model,
       available: (cooldowns.get(m.id) ?? 0) <= now,
       cooldownUntil: cooldowns.get(m.id) ? new Date(cooldowns.get(m.id)!).toISOString() : null,
     })),
+    groqConfigured: !!groq,
   });
 }
 
@@ -197,7 +197,6 @@ export async function POST(req: NextRequest) {
       + (hasGithub ? "\n\nУ тебя есть доступ к GitHub через инструменты. Делай сразу, сначала вызывай github_get_user." : "")
       + `\n\nТЫ МОЖЕШЬ КОНСУЛЬТИРОВАТЬСЯ С КОЛЛЕГАМИ через consult_agent.\nСписок агентов:\n${agentList}`;
 
-    // Load and compress history
     const stored: ChatMsg[] = await loadHistory(agentId);
     const fullHistory: ChatMsg[] = stored.length > 0 ? stored : (history || []);
     const compressedHistory = await compressHistory(fullHistory);
@@ -211,9 +210,8 @@ export async function POST(req: NextRequest) {
     let text = "";
     const githubActions: string[] = [];
     let lastError = "";
-    let usedProvider = "gemini";
+    let usedProvider = "";
 
-    // Try each model in pool order — any error → cool it down, try next
     const pool = availableModels();
 
     for (const entry of pool) {
