@@ -298,6 +298,177 @@ function drawBubble(ctx:CanvasRenderingContext2D,ag:AgentRT,text:string,sx:numbe
 
 type ChatMsg = {role:"user"|"model"|"system"; text:string; githubActions?:string[]};
 
+interface MobileLayoutProps {
+  agents: AgentDef[];
+  chatHistories: Record<string,ChatMsg[]>;
+  sending: boolean;
+  sendingIds: Set<string>;
+  onSend: (agentId: string, msg: string, history: ChatMsg[]) => Promise<void>;
+  setChatHistories: React.Dispatch<React.SetStateAction<Record<string,ChatMsg[]>>>;
+}
+
+function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setChatHistories }: MobileLayoutProps) {
+  const [selectedId, setSelectedId] = useState<string|null>(null);
+  const [inputText, setInputText] = useState("");
+  const [localSending, setLocalSending] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  const selAgent = agents.find(a => a.id === selectedId);
+  const chatHist = selectedId ? chatHistories[selectedId] || [] : [];
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatHist]);
+
+  async function sendMessage() {
+    if (!inputText.trim() || !selectedId || localSending || sendingIds.has(selectedId)) return;
+    const msg = inputText.trim();
+    setInputText("");
+    setLocalSending(true);
+    const history = chatHistories[selectedId] || [];
+    setChatHistories(p => ({ ...p, [selectedId!]: [...(p[selectedId!] || []), { role: "user", text: msg }] }));
+    await onSend(selectedId, msg, history);
+    setLocalSending(false);
+  }
+
+  function clearHistory(agentId: string) {
+    setChatHistories(p => { const n = { ...p }; delete n[agentId]; return n; });
+  }
+
+  if (selAgent) {
+    // Fullscreen chat view
+    return (
+      <div style={{display:"flex",flexDirection:"column",height:"100dvh",background:"#0d0d1a",fontFamily:"'Courier New',monospace",color:"#e2e8f0"}}>
+        {/* Chat header */}
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 16px",background:"#13102a",borderBottom:`2px solid ${selAgent.shirtColor}55`,flexShrink:0}}>
+          <button onClick={() => setSelectedId(null)}
+            style={{background:"#1a1035",border:`1px solid ${selAgent.shirtColor}55`,borderRadius:8,padding:"6px 12px",color:selAgent.shirtColor,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>
+            ← Назад
+          </button>
+          <div style={{width:36,height:36,borderRadius:"50%",background:selAgent.shirtColor,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:"bold",fontSize:15,color:"#fff",flexShrink:0}}>
+            {selAgent.name.charAt(0)}
+          </div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontWeight:"bold",fontSize:14,color:selAgent.shirtColor,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{selAgent.name}</div>
+            <div style={{fontSize:10,color:"#7a6090",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{selAgent.role}</div>
+          </div>
+          {chatHist.length > 0 && (
+            <button onClick={() => clearHistory(selAgent.id)}
+              style={{background:"#2a1020",border:"1px solid #5a2040",borderRadius:6,padding:"4px 8px",color:"#f87171",fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>
+              Очистить
+            </button>
+          )}
+        </div>
+        {/* Messages */}
+        <div style={{flex:1,overflowY:"auto",padding:"12px 16px",display:"flex",flexDirection:"column",gap:8}}>
+          {chatHist.length === 0 && (
+            <div style={{color:"#3a2a5a",fontSize:12,textAlign:"center",marginTop:60,lineHeight:1.8}}>
+              Напиши задание для {selAgent.name}
+            </div>
+          )}
+          {chatHist.map((m, i) => (
+            <div key={i}>
+              {m.role === "system" ? (
+                <div style={{fontSize:10,color:"#5a8a5a",textAlign:"center",padding:"4px 8px",background:"#0a1a0a",borderRadius:6,border:"1px solid #2a4a2a"}}>{m.text}</div>
+              ) : (
+                <div style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start"}}>
+                  <div style={{maxWidth:"85%"}}>
+                    <div style={{padding:"8px 12px",borderRadius:12,fontSize:13,lineHeight:1.55,
+                      background:m.role==="user"?"#2a1a4a":"#1a1035",
+                      border:m.role==="model"?`1px solid ${selAgent.shirtColor}44`:"none",
+                      color:m.role==="user"?"#c4a8f0":"#d4c8f0",
+                      borderTopRightRadius:m.role==="user"?4:12,
+                      borderTopLeftRadius:m.role==="model"?4:12,
+                      whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{m.text}</div>
+                    {m.githubActions && m.githubActions.length > 0 && (
+                      <div style={{marginTop:4,padding:"4px 8px",background:"#0a1a0a",border:"1px solid #2a5a2a",borderRadius:6,fontSize:10,color:"#5aaa5a"}}>
+                        {m.githubActions.map((a,j) => (<div key={j}>⚡ {a.slice(0,80)}</div>))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+          <div ref={chatEndRef}/>
+        </div>
+        {/* Input */}
+        <div style={{padding:"10px 12px",borderTop:`2px solid ${selAgent.shirtColor}33`,background:"#13102a",display:"flex",gap:8,flexShrink:0}}>
+          <input value={inputText} onChange={e => setInputText(e.target.value)}
+            onKeyDown={e => e.key==="Enter" && !e.shiftKey && sendMessage()}
+            placeholder={`Задание для ${selAgent.name}…`} disabled={localSending || sendingIds.has(selectedId)}
+            style={{flex:1,background:"#1a1035",border:`1px solid ${selAgent.shirtColor}55`,borderRadius:10,padding:"10px 14px",
+              color:"#d4c8f0",fontSize:14,outline:"none",fontFamily:"inherit"}}/>
+          <button onClick={sendMessage} disabled={localSending || sendingIds.has(selectedId) || !inputText.trim()}
+            style={{background:selAgent.shirtColor,border:"none",borderRadius:10,padding:"10px 16px",
+              color:"#fff",fontWeight:"bold",fontSize:16,cursor:(localSending||!inputText.trim())?"default":"pointer",
+              opacity:(localSending||sendingIds.has(selectedId)||!inputText.trim())?0.5:1,flexShrink:0}}>
+            {(localSending || sendingIds.has(selectedId)) ? "…" : "→"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Agent grid
+  return (
+    <div style={{display:"flex",flexDirection:"column",height:"100dvh",background:"#0d0d1a",fontFamily:"'Courier New',monospace",color:"#e2e8f0"}}>
+      {/* Header */}
+      <div style={{padding:"14px 16px 10px",background:"#13102a",borderBottom:"2px solid #2a1a4a",flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+          <span style={{fontSize:20,fontWeight:"bold",letterSpacing:1,color:"#a78bfa"}}>Dev Office</span>
+          <div style={{display:"flex",gap:5,flexWrap:"wrap",flex:1}}>
+            {agents.map(a => (
+              <div key={a.id} style={{width:8,height:8,borderRadius:"50%",background:a.shirtColor,
+                boxShadow:chatHistories[a.id]?.length ? `0 0 4px ${a.shirtColor}` : "none"}}/>
+            ))}
+          </div>
+        </div>
+        <div style={{fontSize:11,color:"#5a4a7a"}}>{agents.length} AI-агентов · нажми на карточку чтобы общаться</div>
+      </div>
+      {/* Cards grid */}
+      <div style={{flex:1,overflowY:"auto",padding:12,display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,alignContent:"start"}}>
+        {agents.map(agent => {
+          const hist = chatHistories[agent.id] || [];
+          const lastMsg = hist[hist.length - 1];
+          const isBusy = sendingIds.has(agent.id);
+          return (
+            <div key={agent.id} onClick={() => setSelectedId(agent.id)}
+              style={{background:"#13102a",border:`1.5px solid ${agent.shirtColor}44`,borderRadius:12,padding:"12px 10px",
+                cursor:"pointer",transition:"all 0.15s",display:"flex",flexDirection:"column",gap:8,
+                boxShadow:hist.length ? `0 0 10px ${agent.shirtColor}22` : "none",
+                minHeight:100}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <div style={{width:38,height:38,borderRadius:"50%",background:agent.shirtColor,display:"flex",
+                  alignItems:"center",justifyContent:"center",fontWeight:"bold",fontSize:16,color:"#fff",flexShrink:0}}>
+                  {agent.name.charAt(0)}
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:"bold",fontSize:12,color:agent.shirtColor,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{agent.name}</div>
+                  <div style={{fontSize:9,color:"#7a6090",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:1}}>{agent.role}</div>
+                </div>
+                {isBusy && (
+                  <div style={{width:8,height:8,borderRadius:"50%",background:"#22c55e",flexShrink:0,
+                    boxShadow:"0 0 6px #22c55e",animation:"pulse 1s infinite"}}/>
+                )}
+              </div>
+              {lastMsg && (
+                <div style={{fontSize:10,color:"#8a7aa0",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",
+                  background:"#0d0d1a",borderRadius:6,padding:"4px 6px"}}>
+                  {lastMsg.role==="user"?"Вы: ":""}{lastMsg.text.slice(0, 50)}{lastMsg.text.length > 50 ? "…" : ""}
+                </div>
+              )}
+              {hist.length > 0 && (
+                <div style={{fontSize:9,color:"#5a4a7a"}}>{hist.length} сообщ.</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function loadFromStorage<T>(key:string,fallback:T):T{
   if(typeof window==="undefined")return fallback;
   try{const s=localStorage.getItem(key);return s?JSON.parse(s):fallback;}catch{return fallback;}
@@ -368,6 +539,15 @@ export default function Home(){
   const [teamDiscussion,setTeamDiscussion]=useState<{agentId:string;agentName:string;role:string;text:string}[]>([]);
   const [teamTopic,setTeamTopic]=useState("");
   const [teamLoading,setTeamLoading]=useState(false);
+  const [isMobile,setIsMobile]=useState(false);
+  const [sendingIds,setSendingIds]=useState<Set<string>>(new Set());
+
+  useEffect(()=>{
+    const check=()=>setIsMobile(window.innerWidth<768);
+    check();
+    window.addEventListener('resize',check);
+    return()=>window.removeEventListener('resize',check);
+  },[]);
 
   useEffect(() => {
     if ('serviceWorker' in navigator) {
