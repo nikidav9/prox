@@ -773,11 +773,39 @@ export default function Home(){
       });
     }
     const consultDone=false;
+    void consultDone;
+    const autoRetry=async(waitSecs:number)=>{
+      let secs=waitSecs;
+      setChatHistories(p=>({...p,[agentId]:[...(p[agentId]||[]),{role:"system",text:`⏳ Лимит запросов. Авто-повтор через ${secs} сек…`}]}));
+      sendingRef.current.delete(agentId);
+      setSendingIds(s=>{const n=new Set(s);n.delete(agentId);return n;});
+      if(agentId===selectedId)setSending(false);
+      const countId=setInterval(()=>{
+        secs--;
+        setChatHistories(p=>{
+          const hist=p[agentId]||[];
+          const last=hist[hist.length-1];
+          if(last?.role==="system"&&last.text.startsWith("⏳")){
+            return{...p,[agentId]:[...hist.slice(0,-1),{role:"system",text:`⏳ Лимит запросов. Авто-повтор через ${secs} сек…`}]};
+          }
+          return p;
+        });
+        if(secs<=0)clearInterval(countId);
+      },1000);
+      await new Promise(r=>setTimeout(r,waitSecs*1000));
+      clearInterval(countId);
+      setChatHistories(p=>({...p,[agentId]:(p[agentId]||[]).filter(m=>!(m.role==="system"&&m.text.startsWith("⏳")))}));
+      dispatchTask(agentId,msg,history);
+    };
     try{
       const res=await fetch("/api/agent",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({message:msg,agentId,history:apiHistory,githubToken})});
       const data=await res.json();
       await idbDelete(taskId);
+      if(res.status===429&&data.retryAfter){
+        await autoRetry(Math.min(data.retryAfter,120));
+        return;
+      }
       const reply=(data.text as string)||(data.error?`⚠️ Ошибка: ${data.error}`:"⚠️ Нет ответа от агента");
       const acts:string[]|undefined=data.githubActions;
       const showReply=()=>{
@@ -795,38 +823,7 @@ export default function Home(){
         }
       };
       showReply();
-    }catch(e){
-      const res=e instanceof Response?e:null;
-      let retryAfter:number|null=null;
-      try{const d=await (res?.json());retryAfter=d?.retryAfter??null;}catch{}
-      if(retryAfter&&retryAfter<=120){
-        // Rate-limited — show countdown then auto-retry
-        let secs=retryAfter;
-        const countId=setInterval(()=>{
-          secs--;
-          setChatHistories(p=>{
-            const hist=p[agentId]||[];
-            const last=hist[hist.length-1];
-            if(last?.role==="system"&&last.text.startsWith("⏳")){
-              return{...p,[agentId]:[...hist.slice(0,-1),{role:"system",text:`⏳ Лимит запросов. Авто-повтор через ${secs} сек…`}]};
-            }
-            return p;
-          });
-          if(secs<=0)clearInterval(countId);
-        },1000);
-        setChatHistories(p=>({...p,[agentId]:[...(p[agentId]||[]),{role:"system",text:`⏳ Лимит запросов. Авто-повтор через ${secs} сек…`}]}));
-        sendingRef.current.delete(agentId);
-        setSendingIds(s=>{const n=new Set(s);n.delete(agentId);return n;});
-        if(agentId===selectedId)setSending(false);
-        await new Promise(r=>setTimeout(r,retryAfter*1000));
-        clearInterval(countId);
-        setChatHistories(p=>{
-          const hist=p[agentId]||[];
-          return{...p,[agentId]:hist.filter(m=>!(m.role==="system"&&m.text.startsWith("⏳")))};
-        });
-        await dispatchTask(agentId,msg,history);
-        return;
-      }
+    }catch{
       setChatHistories(p=>({...p,[agentId]:[...(p[agentId]||[]),{role:"model",text:"⚠️ Ошибка соединения, попробуй ещё раз"}]}));
       if(ag){ag.state="idle";ag.busy=false;}
     }finally{

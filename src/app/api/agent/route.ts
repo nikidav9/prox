@@ -211,7 +211,7 @@ export async function POST(req: NextRequest) {
     });
 
     // Auto-retry on rate limit (429) — wait the time Gemini specifies, then retry
-    async function sendWithRetry(payload: Parameters<typeof chat.sendMessage>[0], maxWaitMs = 50_000) {
+    async function sendWithRetry(payload: Parameters<typeof chat.sendMessage>[0]) {
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
           return await chat.sendMessage(payload);
@@ -219,7 +219,7 @@ export async function POST(req: NextRequest) {
           const msg = String(err);
           const match = msg.match(/retry in ([\d.]+)s/i);
           const waitMs = match ? Math.ceil(parseFloat(match[1]) * 1000) : 15_000;
-          if (attempt < 2 && waitMs <= maxWaitMs) {
+          if (attempt < 2 && waitMs <= 25_000) {
             await new Promise(r => setTimeout(r, waitMs));
           } else throw err;
         }
