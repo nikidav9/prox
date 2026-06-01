@@ -388,6 +388,7 @@ function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setC
 
   function clearHistory(agentId: string) {
     setChatHistories(p => { const n = { ...p }; delete n[agentId]; return n; });
+    fetch("/api/history", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agentId }) }).catch(() => {});
   }
 
   if (selAgent) {
@@ -942,6 +943,7 @@ export default function Home(){
 
   function clearHistory(agentId:string){
     setChatHistories(p=>{const n={...p};delete n[agentId];return n;});
+    fetch("/api/history",{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({agentId})}).catch(()=>{});
   }
 
   async function startTeamDiscussion(){
