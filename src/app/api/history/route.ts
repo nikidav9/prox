@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { loadAllHistories } from "@/lib/redis";
+import { loadAllHistories } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 

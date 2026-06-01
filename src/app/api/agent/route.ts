@@ -1,7 +1,7 @@
 import { GoogleGenerativeAI, Tool, SchemaType } from "@google/generative-ai";
 import { NextRequest, NextResponse } from "next/server";
 import { AGENTS } from "@/lib/agents";
-import { loadHistory, saveHistory, ChatMsg } from "@/lib/redis";
+import { loadHistory, saveHistory, ChatMsg } from "@/lib/supabase";
 
 export const maxDuration = 60;
 

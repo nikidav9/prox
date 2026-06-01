@@ -624,6 +624,30 @@ export default function Home(){
     return()=>window.removeEventListener('resize',check);
   },[]);
 
+  // Load histories from Supabase on mount and poll every 30s
+  useEffect(()=>{
+    async function fetchHistories(){
+      try{
+        const res=await fetch('/api/history');
+        if(!res.ok)return;
+        const data=await res.json();
+        if(data&&typeof data==='object'){
+          setChatHistories(prev=>{
+            // Merge: server wins for any agent not currently busy
+            const merged={...prev};
+            for(const [id,msgs] of Object.entries(data) as [string,ChatMsg[]][]){
+              if(!sendingRef.current.has(id)) merged[id]=msgs;
+            }
+            return merged;
+          });
+        }
+      }catch{}
+    }
+    fetchHistories();
+    const iv=setInterval(fetchHistories,30_000);
+    return()=>clearInterval(iv);
+  },[]);
+
   useEffect(() => {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').then(() => {
