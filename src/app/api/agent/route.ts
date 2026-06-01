@@ -35,7 +35,6 @@ function availableModels(): ModelEntry[] {
 }
 
 function markCooled(id: string, msg: string) {
-  // Extract retry-after from error message, default 20 min
   const secMatch = msg.match(/try again in ([\d.]+)s/i) || msg.match(/retry in ([\d.]+)s/i);
   const minMatch = msg.match(/try again in (\d+)m/i);
   const waitMs = secMatch
@@ -43,16 +42,6 @@ function markCooled(id: string, msg: string) {
     : minMatch ? parseInt(minMatch[1]) * 60_000
     : 20 * 60_000;
   cooldowns.set(id, Date.now() + Math.min(waitMs + 5000, 24 * 3600_000));
-}
-
-function isSkippableError(msg: string) {
-  return (
-    msg.includes("429") || msg.includes("quota") || msg.includes("RESOURCE_EXHAUSTED") ||
-    msg.includes("rate_limit") || msg.includes("rate limit") || msg.includes("tokens per day") ||
-    msg.includes("400") || msg.includes("tool_use_failed") || msg.includes("Failed to call") ||
-    msg.includes("503") || msg.includes("502") || msg.includes("overloaded") ||
-    msg.includes("unavailable") || msg.includes("capacity")
-  );
 }
 
 // ── Context compression ───────────────────────────────────────────────────────
@@ -317,7 +306,6 @@ export async function POST(req: NextRequest) {
       } catch (err) {
         const errMsg = String(err);
         lastError = errMsg;
-        // Always cool down and try next — don't give up on a single model failure
         markCooled(entry.id, errMsg);
         console.log(`[rotation] ${entry.id} failed (${errMsg.slice(0, 80)}), trying next...`);
         continue;
@@ -326,10 +314,10 @@ export async function POST(req: NextRequest) {
 
     if (!text) {
       const allExhausted = availableModels().length === 0;
-      const msg = allExhausted
-        ? "Все модели на перерыве (лимиты), автоматически попробуем снова через несколько минут."
+      const errorMsg = allExhausted
+        ? "Все модели на перерыве (лимиты квот), попробуйте через несколько минут."
         : `Не удалось получить ответ. Последняя ошибка: ${lastError.slice(0, 200)}`;
-      return NextResponse.json({ error: msg }, { status: 429 });
+      return NextResponse.json({ error: errorMsg }, { status: 429 });
     }
 
     const botMsg: ChatMsg = { role: "model", text, ...(githubActions.length ? { githubActions } : {}) };
@@ -344,7 +332,6 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[agent] outer catch:", msg);
-    // If it's a rate limit error that escaped the pool loop, return 429 not 500
     const isRate = msg.includes("429") || msg.includes("quota") || msg.includes("rate_limit") || msg.includes("RESOURCE_EXHAUSTED");
     const retryMatch = msg.match(/try again in (\d+)m/i) || msg.match(/retry in ([\d.]+)s/i);
     const retryAfter = retryMatch ? (msg.includes("m") ? parseInt(retryMatch[1]) * 60 : Math.ceil(parseFloat(retryMatch[1]))) : null;
