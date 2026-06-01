@@ -260,22 +260,60 @@ export async function POST(req: NextRequest) {
       const isQuota = geminiMsg.includes("429") || geminiMsg.includes("quota") || geminiMsg.includes("RESOURCE_EXHAUSTED");
 
       if (isQuota && groq) {
-        // Fallback to Groq
         usedGroq = true;
         const groqHistory = (history || []).map((m: { role: string; text: string }) => ({
-          role: m.role === "model" ? "assistant" : "user" as "user" | "assistant",
+          role: (m.role === "model" ? "assistant" : "user") as "user" | "assistant",
           content: m.text,
         }));
-        const groqRes = await groq.chat.completions.create({
-          model: "llama-3.3-70b-versatile",
-          messages: [
-            { role: "system", content: systemInstruction },
-            ...groqHistory,
-            { role: "user", content: message },
-          ],
-          max_tokens: 1024,
-        });
-        text = groqRes.choices[0]?.message?.content || "Нет ответа";
+
+        // GitHub tools in OpenAI format for Groq
+        const groqTools = hasGithub ? [
+          { type: "function" as const, function: { name: "github_get_user", description: "Get authenticated GitHub user", parameters: { type: "object", properties: {} } } },
+          { type: "function" as const, function: { name: "github_list_repos", description: "List user repos", parameters: { type: "object", properties: {} } } },
+          { type: "function" as const, function: { name: "github_create_repo", description: "Create a new repo", parameters: { type: "object", properties: { name: { type: "string" }, description: { type: "string" }, private: { type: "boolean" }, auto_init: { type: "boolean" } }, required: ["name"] } } },
+          { type: "function" as const, function: { name: "github_create_or_update_file", description: "Create or update file in repo", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, path: { type: "string" }, content: { type: "string" }, message: { type: "string" }, branch: { type: "string" } }, required: ["owner", "repo", "path", "content", "message"] } } },
+          { type: "function" as const, function: { name: "github_create_branch", description: "Create a branch", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, branch: { type: "string" } }, required: ["owner", "repo", "branch"] } } },
+          { type: "function" as const, function: { name: "github_list_files", description: "List files in repo", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, path: { type: "string" } }, required: ["owner", "repo"] } } },
+          { type: "function" as const, function: { name: "github_list_issues", description: "List open issues", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" } }, required: ["owner", "repo"] } } },
+          { type: "function" as const, function: { name: "github_create_issue", description: "Create an issue", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, title: { type: "string" }, body: { type: "string" } }, required: ["owner", "repo", "title"] } } },
+        ] : undefined;
+
+        const groqMessages: Groq.Chat.ChatCompletionMessageParam[] = [
+          { role: "system", content: systemInstruction },
+          ...groqHistory,
+          { role: "user", content: message },
+        ];
+
+        // Tool-calling loop for Groq (max 6 rounds)
+        for (let round = 0; round < 6; round++) {
+          const groqRes = await groq.chat.completions.create({
+            model: "llama-3.3-70b-versatile",
+            messages: groqMessages,
+            max_tokens: 1024,
+            ...(groqTools ? { tools: groqTools, tool_choice: "auto" } : {}),
+          });
+          const choice = groqRes.choices[0];
+          const msg = choice.message;
+          groqMessages.push(msg as Groq.Chat.ChatCompletionMessageParam);
+
+          if (!msg.tool_calls || msg.tool_calls.length === 0) {
+            text = msg.content || "Нет ответа";
+            break;
+          }
+
+          // Execute each tool call
+          for (const tc of msg.tool_calls) {
+            const args = JSON.parse(tc.function.arguments || "{}");
+            const toolResult = await runGithubTool(tc.function.name, args, githubToken);
+            const summary = JSON.stringify(toolResult);
+            githubActions.push(`${tc.function.name}: ${summary.slice(0, 150)}`);
+            groqMessages.push({
+              role: "tool",
+              tool_call_id: tc.id,
+              content: JSON.stringify(toolResult),
+            });
+          }
+        }
       } else {
         throw geminiErr;
       }
