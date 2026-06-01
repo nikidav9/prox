@@ -979,25 +979,12 @@ export default function Home(){
         </div>
         {totalMsgs>0&&<span style={{fontSize:9,color:"#5a8a3a",marginLeft:4}}>💾 {totalMsgs} сообщ.</span>}
         <div style={{marginLeft:"auto",display:"flex",gap:8,alignItems:"center"}}>
-          <span style={{fontSize:9,color:hasGithub?"#5a9a5a":"#7a6830"}}>{hasGithub?"GitHub подключён":"GitHub не настроен"}</span>
+          <span style={{fontSize:9,color:"#22c55e"}}>● GitHub</span>
           <button onClick={()=>setShowTeamChat(!showTeamChat)}
             style={{background:showTeamChat?"#2a1a3a":"#1a0a2a",border:"1px solid #5a3a8a",borderRadius:4,padding:"2px 8px",color:"#c084fc",fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>Команда</button>
-          <button onClick={()=>{setShowSettings(!showSettings);setTokenInput(githubToken);}}
-            style={{background:showSettings?"#3a3010":"#2a2008",border:"1px solid #3a3010",borderRadius:4,padding:"2px 8px",color:"#D4A843",fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>Настройки</button>
         </div>
       </div>
 
-      {showSettings&&(
-        <div style={{background:"#1a1505",borderBottom:"2px solid #3a3010",padding:"10px 14px",display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
-          <span style={{fontSize:11,color:"#D4A843",minWidth:100}}>GitHub Token:</span>
-          <input value={tokenInput} onChange={e=>setTokenInput(e.target.value)} placeholder="ghp_xxxxxxxxxxxx" type="password"
-            style={{flex:1,minWidth:240,background:"#221a0a",border:"1px solid #5a4a10",borderRadius:4,padding:"4px 8px",color:"#d4c090",fontSize:11,outline:"none",fontFamily:"inherit"}}/>
-          <button onClick={()=>{setGithubToken(tokenInput);setShowSettings(false);}}
-            style={{background:"#3a7a3a",border:"none",borderRadius:4,padding:"4px 12px",color:"#fff",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Сохранить</button>
-          {githubToken&&<button onClick={()=>{setGithubToken("");setTokenInput("");setShowSettings(false);}}
-            style={{background:"#7a2a2a",border:"none",borderRadius:4,padding:"4px 10px",color:"#fff",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Отключить</button>}
-        </div>
-      )}
 
       <div style={{display:"flex",flex:1,overflow:"hidden"}}>
         <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",padding:4}}>
