@@ -21,19 +21,19 @@ const SPRITE_URLS = [0,1,2,3,4,5].map(
 );
 
 const SEATS = [
-  // Top row — face up, desk above at ty=2
-  {tx:2, ty:3, dir:UP   as Dir},
-  {tx:5, ty:3, dir:UP   as Dir},
-  {tx:8, ty:3, dir:UP   as Dir},
-  {tx:11,ty:3, dir:UP   as Dir},
-  {tx:14,ty:3, dir:UP   as Dir},
-  // Middle row — face up, desk above at ty=5
-  {tx:2, ty:6, dir:UP   as Dir},
-  {tx:5, ty:6, dir:UP   as Dir},
-  {tx:8, ty:6, dir:UP   as Dir},
-  {tx:11,ty:6, dir:UP   as Dir},
-  {tx:14,ty:6, dir:UP   as Dir},
-  // Bottom row — face down, desk below at ty=10
+  // Top row — desk above at ty=2, agents face viewer (DOWN)
+  {tx:2, ty:3, dir:DOWN as Dir},
+  {tx:5, ty:3, dir:DOWN as Dir},
+  {tx:8, ty:3, dir:DOWN as Dir},
+  {tx:11,ty:3, dir:DOWN as Dir},
+  {tx:14,ty:3, dir:DOWN as Dir},
+  // Middle row — desk above at ty=5, agents face viewer (DOWN)
+  {tx:2, ty:6, dir:DOWN as Dir},
+  {tx:5, ty:6, dir:DOWN as Dir},
+  {tx:8, ty:6, dir:DOWN as Dir},
+  {tx:11,ty:6, dir:DOWN as Dir},
+  {tx:14,ty:6, dir:DOWN as Dir},
+  // Bottom row — desk below at ty=10, agents face viewer (DOWN)
   {tx:2, ty:9, dir:DOWN as Dir},
   {tx:5, ty:9, dir:DOWN as Dir},
   {tx:8, ty:9, dir:DOWN as Dir},
@@ -181,7 +181,9 @@ function drawDeskStation(ctx:CanvasRenderingContext2D,seatTile:{tx:number,ty:num
   for(let ki=0;ki<6;ki++)for(let kj=0;kj<2;kj++)ctx.fillRect(kx+3+ki*(kw/6-1),ky+3+kj*6,kw/6-3,4);
   ctx.fillStyle="#888";rr(ctx,dsx+RT*2.6,dsy+RT*0.55,10,14,3);ctx.fill();
   ctx.fillStyle="#555";ctx.fillRect(dsx+RT*2.6+4,dsy+RT*0.55,2,6);
-  const chairY=isTop?dsy+RT+2:dsy-RT*0.6,chairX=seatTile.tx*RT+RT/2-RT*0.6,chairW=RT*1.2,chairH=RT*0.55;
+  // Chair always below seat (agent sits in front of desk)
+  const chairY=seatTile.ty*RT+4;
+  const chairX=seatTile.tx*RT+RT/2-RT*0.6,chairW=RT*1.2,chairH=RT*0.55;
   ctx.fillStyle=P.wood3;ctx.fillRect(chairX+4,chairY+chairH,5,10);ctx.fillRect(chairX+chairW-9,chairY+chairH,5,10);
   ctx.fillStyle=P.chair;rr(ctx,chairX,chairY,chairW,chairH,4);ctx.fill();
   ctx.strokeStyle=P.chairDk;ctx.lineWidth=1.5;ctx.stroke();
@@ -210,16 +212,15 @@ function drawBoxes(ctx:CanvasRenderingContext2D,bx:number,by:number){
   ctx.fillStyle="#A88530";ctx.fillRect(bx-10,by-28,22,3);ctx.fillRect(bx,by-28,2,14);
 }
 function drawNameBadge(ctx:CanvasRenderingContext2D,ag:AgentRT,fc:number){
-  // Always draw badge ABOVE the character sprite so it's never hidden
   const sx=Math.round(ag.ax*SCALE);
   const sy=Math.round(ag.ay*SCALE);
-  const by=sy-CHAR_H*SCALE-16;
   const label=`${ag.def.name} · ${ag.def.role}`;
   ctx.font="bold 8px monospace";
   const tw=ctx.measureText(label).width;
   const bx=Math.max(4,Math.min(W-tw-14,sx-tw/2-5));
+  const by=sy-CHAR_H*SCALE-18;
   rr(ctx,bx,by,tw+10,14,2);
-  ctx.fillStyle="rgba(10,10,20,0.88)";ctx.fill();
+  ctx.fillStyle="rgba(10,10,20,0.9)";ctx.fill();
   ctx.strokeStyle=ag.def.shirtColor;ctx.lineWidth=1.5;ctx.stroke();
   ctx.fillStyle=ag.def.shirtColor;ctx.fillText(label,bx+5,by+10);
   if(ag.busy){
@@ -233,10 +234,8 @@ function drawScene(ctx:CanvasRenderingContext2D,agents:AgentRT[],sprites:(HTMLIm
   for(let i=0;i<15;i++)drawDeskStation(ctx,SEATS[i],i<10,agents[i],fc);
   drawPlant(ctx,RT+RT/2,H-RT-2,fc,0);drawPlant(ctx,W-RT-RT/2,H-RT-2,fc,1);
   drawBoxes(ctx,RT+RT*2,RT*2+RT/2);drawPlant(ctx,W-RT-RT/2,RT*2+8,fc,2);
-  // Draw agents sorted by y (depth)
   const sorted=[...agents].sort((a,b)=>a.ay-b.ay);
   for(const ag of sorted)drawChar(ctx,sprites,ag,Math.round(ag.ax*SCALE),Math.round(ag.ay*SCALE),fc);
-  // Draw bubbles and badges LAST so they're always on top
   for(const ag of agents)if(ag.bubble)drawBubble(ctx,ag,ag.bubble,Math.round(ag.ax*SCALE),Math.round(ag.ay*SCALE));
   for(const ag of agents)drawNameBadge(ctx,ag,fc);
 }
@@ -317,7 +316,6 @@ function idbOpen(): Promise<IDBDatabase> {
     req.onerror = () => reject(req.error);
   });
 }
-
 async function idbPut(task: object) {
   const db = await idbOpen();
   return new Promise<void>((resolve, reject) => {
@@ -327,7 +325,6 @@ async function idbPut(task: object) {
     req.onerror = () => reject(req.error);
   });
 }
-
 async function idbGetAll(): Promise<Record<string, unknown>[]> {
   const db = await idbOpen();
   return new Promise((resolve, reject) => {
@@ -337,7 +334,6 @@ async function idbGetAll(): Promise<Record<string, unknown>[]> {
     req.onerror = () => reject(req.error);
   });
 }
-
 async function idbDelete(id: string) {
   const db = await idbOpen();
   return new Promise<void>((resolve, reject) => {
@@ -402,10 +398,7 @@ export default function Home(){
             const existing = p[task.agentId as string] || [];
             const last = existing[existing.length - 1];
             if (last?.role === 'model' && last.text === reply) return p;
-            return {
-              ...p,
-              [task.agentId as string]: [...existing, { role: 'model' as const, text: reply, ...(acts ? { githubActions: acts } : {}) }],
-            };
+            return { ...p, [task.agentId as string]: [...existing, { role: 'model' as const, text: reply, ...(acts ? { githubActions: acts } : {}) }] };
           });
           idbDelete(task.id as string);
         }
@@ -413,13 +406,8 @@ export default function Home(){
     }).catch(() => {});
   }, []);
 
-  useEffect(()=>{
-    try{localStorage.setItem("dev_office_history",JSON.stringify(chatHistories));}catch{}
-  },[chatHistories]);
-
-  useEffect(()=>{
-    try{localStorage.setItem("dev_office_github",githubToken);}catch{}
-  },[githubToken]);
+  useEffect(()=>{ try{localStorage.setItem("dev_office_history",JSON.stringify(chatHistories));}catch{} },[chatHistories]);
+  useEffect(()=>{ try{localStorage.setItem("dev_office_github",githubToken);}catch{} },[githubToken]);
 
   useEffect(()=>{
     spritesRef.current=SPRITE_URLS.map(()=>null);
@@ -492,24 +480,18 @@ export default function Home(){
     sendingRef.current.add(agentId);
     const ag=agentsRef.current.find(a=>a.def.id===agentId);
     if(ag){ag.state="type";ag.dir=SEATS[ag.seatI].dir;ag.busy=true;ag.bubble=null;}
-
-    const taskId = `${agentId}-${Date.now()}`;
-    const apiHistory=history
-      .filter(m=>m.role==="user"||m.role==="model")
-      .map(m=>({role:m.role as "user"|"model",text:m.text}));
-    await idbPut({ id: taskId, agentId, message: msg, history: apiHistory, githubToken, status: 'pending', createdAt: Date.now() });
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.ready.then(reg => {
-        if ('sync' in reg) {
-          (reg as ServiceWorkerRegistration & { sync: { register: (tag: string) => Promise<void> } }).sync.register('process-tasks').catch(() => {
-            navigator.serviceWorker.controller?.postMessage({ type: 'PROCESS_NOW' });
+    const taskId=`${agentId}-${Date.now()}`;
+    const apiHistory=history.filter(m=>m.role==="user"||m.role==="model").map(m=>({role:m.role as "user"|"model",text:m.text}));
+    await idbPut({id:taskId,agentId,message:msg,history:apiHistory,githubToken,status:'pending',createdAt:Date.now()});
+    if('serviceWorker' in navigator){
+      navigator.serviceWorker.ready.then(reg=>{
+        if('sync' in reg){
+          (reg as ServiceWorkerRegistration&{sync:{register:(tag:string)=>Promise<void>}}).sync.register('process-tasks').catch(()=>{
+            navigator.serviceWorker.controller?.postMessage({type:'PROCESS_NOW'});
           });
-        } else {
-          navigator.serviceWorker.controller?.postMessage({ type: 'PROCESS_NOW' });
-        }
+        }else{navigator.serviceWorker.controller?.postMessage({type:'PROCESS_NOW'});}
       });
     }
-
     const willConsult=ag&&Math.random()<0.3;
     let consultTarget:AgentRT|null=null;
     let consultDone=false;
@@ -533,7 +515,6 @@ export default function Home(){
         },1200);
       }
     }
-
     try{
       const res=await fetch("/api/agent",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({message:msg,agentId,history:apiHistory,githubToken})});
@@ -544,8 +525,7 @@ export default function Home(){
       const showReply=()=>{
         setChatHistories(p=>{
           const prev=p[agentId]||[];
-          const msgs:ChatMsg[]=[...prev,{role:"model",text:reply,...(acts?{githubActions:acts}:{})}];
-          return{...p,[agentId]:msgs};
+          return{...p,[agentId]:[...prev,{role:"model",text:reply,...(acts?{githubActions:acts}:{})}]};
         });
         if(ag){
           ag.bubble=reply.slice(0,60);ag.bubbleT=6;
@@ -572,15 +552,9 @@ export default function Home(){
   useEffect(()=>{
     if(resumedRef.current)return;
     resumedRef.current=true;
-    const toResume=Object.entries(chatHistories).filter(([,hist])=>{
-      if(hist.length===0)return false;
-      const last=hist[hist.length-1];
-      return last.role==="user";
-    });
+    const toResume=Object.entries(chatHistories).filter(([,hist])=>hist.length>0&&hist[hist.length-1].role==="user");
     toResume.forEach(([agentId,hist],i)=>{
-      const msg=hist[hist.length-1].text;
-      const prevHistory=hist.slice(0,-1);
-      setTimeout(()=>dispatchTask(agentId,msg,prevHistory),600+i*400);
+      setTimeout(()=>dispatchTask(agentId,hist[hist.length-1].text,hist.slice(0,-1)),600+i*400);
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
@@ -609,19 +583,14 @@ export default function Home(){
     setChatHistories(p=>{const n={...p};delete n[agentId];return n;});
   }
 
-  async function startTeamDiscussion() {
-    if (!teamTopic.trim() || teamLoading) return;
-    setTeamLoading(true);
-    setTeamDiscussion([]);
-    try {
-      const res = await fetch('/api/team', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic: teamTopic }),
-      });
-      const data = await res.json();
-      if (data.messages) setTeamDiscussion(data.messages);
-    } catch {}
+  async function startTeamDiscussion(){
+    if(!teamTopic.trim()||teamLoading)return;
+    setTeamLoading(true);setTeamDiscussion([]);
+    try{
+      const res=await fetch('/api/team',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({topic:teamTopic})});
+      const data=await res.json();
+      if(data.messages)setTeamDiscussion(data.messages);
+    }catch{}
     setTeamLoading(false);
   }
 
@@ -645,39 +614,23 @@ export default function Home(){
         </div>
         {totalMsgs>0&&<span style={{fontSize:9,color:"#5a8a3a",marginLeft:4}}>💾 {totalMsgs} сообщ.</span>}
         <div style={{marginLeft:"auto",display:"flex",gap:8,alignItems:"center"}}>
-          <span style={{fontSize:9,color:hasGithub?"#5a9a5a":"#7a6830"}}>
-            {hasGithub?"GitHub подключён":"GitHub не настроен"}
-          </span>
+          <span style={{fontSize:9,color:hasGithub?"#5a9a5a":"#7a6830"}}>{hasGithub?"GitHub подключён":"GitHub не настроен"}</span>
           <button onClick={()=>setShowTeamChat(!showTeamChat)}
-            style={{background:showTeamChat?"#2a1a3a":"#1a0a2a",border:"1px solid #5a3a8a",borderRadius:4,
-              padding:"2px 8px",color:"#c084fc",fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>
-            Команда
-          </button>
+            style={{background:showTeamChat?"#2a1a3a":"#1a0a2a",border:"1px solid #5a3a8a",borderRadius:4,padding:"2px 8px",color:"#c084fc",fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>Команда</button>
           <button onClick={()=>{setShowSettings(!showSettings);setTokenInput(githubToken);}}
-            style={{background:showSettings?"#3a3010":"#2a2008",border:"1px solid #3a3010",borderRadius:4,
-              padding:"2px 8px",color:"#D4A843",fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>
-            Настройки
-          </button>
+            style={{background:showSettings?"#3a3010":"#2a2008",border:"1px solid #3a3010",borderRadius:4,padding:"2px 8px",color:"#D4A843",fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>Настройки</button>
         </div>
       </div>
 
       {showSettings&&(
         <div style={{background:"#1a1505",borderBottom:"2px solid #3a3010",padding:"10px 14px",display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
           <span style={{fontSize:11,color:"#D4A843",minWidth:100}}>GitHub Token:</span>
-          <input value={tokenInput} onChange={e=>setTokenInput(e.target.value)}
-            placeholder="ghp_xxxxxxxxxxxx (classic token с repo scope)"
-            type="password"
-            style={{flex:1,minWidth:240,background:"#221a0a",border:"1px solid #5a4a10",borderRadius:4,
-              padding:"4px 8px",color:"#d4c090",fontSize:11,outline:"none",fontFamily:"inherit"}}/>
+          <input value={tokenInput} onChange={e=>setTokenInput(e.target.value)} placeholder="ghp_xxxxxxxxxxxx" type="password"
+            style={{flex:1,minWidth:240,background:"#221a0a",border:"1px solid #5a4a10",borderRadius:4,padding:"4px 8px",color:"#d4c090",fontSize:11,outline:"none",fontFamily:"inherit"}}/>
           <button onClick={()=>{setGithubToken(tokenInput);setShowSettings(false);}}
-            style={{background:"#3a7a3a",border:"none",borderRadius:4,padding:"4px 12px",
-              color:"#fff",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Сохранить</button>
+            style={{background:"#3a7a3a",border:"none",borderRadius:4,padding:"4px 12px",color:"#fff",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Сохранить</button>
           {githubToken&&<button onClick={()=>{setGithubToken("");setTokenInput("");setShowSettings(false);}}
-            style={{background:"#7a2a2a",border:"none",borderRadius:4,padding:"4px 10px",
-              color:"#fff",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Отключить</button>}
-          <span style={{fontSize:9,color:"#7a6830",maxWidth:300}}>
-            Создай token на github.com/settings/tokens с правами: repo, workflow
-          </span>
+            style={{background:"#7a2a2a",border:"none",borderRadius:4,padding:"4px 10px",color:"#fff",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Отключить</button>}
         </div>
       )}
 
@@ -689,58 +642,44 @@ export default function Home(){
         </div>
 
         {showTeamChat&&(
-          <div style={{width:340,display:"flex",flexDirection:"column",background:"#120a1e",
-            borderLeft:"3px solid #5a3a8a",flexShrink:0}}>
+          <div style={{width:340,display:"flex",flexDirection:"column",background:"#120a1e",borderLeft:"3px solid #5a3a8a",flexShrink:0}}>
             <div style={{padding:"8px 12px",borderBottom:"2px solid #3a2060",background:"#1a0a2a",display:"flex",alignItems:"center",gap:8}}>
               <div style={{flex:1}}>
                 <div style={{fontWeight:"bold",fontSize:13,color:"#c084fc"}}>Командный чат</div>
                 <div style={{fontSize:9,color:"#7a5a9a"}}>Обсуждение всей командой</div>
               </div>
               <button onClick={()=>setShowTeamChat(false)}
-                style={{background:"#2a1a3a",border:"1px solid #5a3a8a",borderRadius:3,
-                  padding:"2px 6px",color:"#c084fc",fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>✕</button>
+                style={{background:"#2a1a3a",border:"1px solid #5a3a8a",borderRadius:3,padding:"2px 6px",color:"#c084fc",fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>✕</button>
             </div>
             <div style={{padding:8,borderBottom:"1px solid #3a2060",display:"flex",gap:6}}>
               <input value={teamTopic} onChange={e=>setTeamTopic(e.target.value)}
                 onKeyDown={e=>e.key==="Enter"&&startTeamDiscussion()}
-                placeholder="Тема для обсуждения..."
-                disabled={teamLoading}
-                style={{flex:1,background:"#1a0a2a",border:"1px solid #5a3a8a",borderRadius:5,
-                  padding:"5px 9px",color:"#d4b8f0",fontSize:11,outline:"none",fontFamily:"inherit"}}/>
+                placeholder="Тема для обсуждения..." disabled={teamLoading}
+                style={{flex:1,background:"#1a0a2a",border:"1px solid #5a3a8a",borderRadius:5,padding:"5px 9px",color:"#d4b8f0",fontSize:11,outline:"none",fontFamily:"inherit"}}/>
               <button onClick={startTeamDiscussion} disabled={teamLoading||!teamTopic.trim()}
-                style={{background:"#5a3a8a",border:"none",borderRadius:5,padding:"5px 11px",
-                  color:"#fff",fontWeight:"bold",fontSize:12,cursor:teamLoading?"wait":"pointer",
-                  opacity:teamLoading||!teamTopic.trim()?0.5:1,fontFamily:"inherit"}}>
-                {teamLoading?"…":"→"}
-              </button>
+                style={{background:"#5a3a8a",border:"none",borderRadius:5,padding:"5px 11px",color:"#fff",fontWeight:"bold",fontSize:12,
+                  cursor:teamLoading?"wait":"pointer",opacity:teamLoading||!teamTopic.trim()?0.5:1,fontFamily:"inherit"}}>
+                {teamLoading?"…":"→"}</button>
             </div>
             <div style={{flex:1,overflowY:"auto",padding:8,display:"flex",flexDirection:"column",gap:6}}>
               {teamDiscussion.length===0&&!teamLoading&&(
                 <div style={{color:"#4a2a6a",fontSize:10,textAlign:"center",marginTop:40,lineHeight:1.6}}>
-                  Введи тему и вся команда обсудит её<br/>
-                  <span style={{color:"#6a4a8a"}}>на русском языке</span>
+                  Введи тему и вся команда обсудит её<br/><span style={{color:"#6a4a8a"}}>на русском языке</span>
                 </div>
               )}
-              {teamLoading&&(
-                <div style={{color:"#7a5a9a",fontSize:10,textAlign:"center",marginTop:40}}>
-                  Команда обсуждает...
-                </div>
-              )}
+              {teamLoading&&<div style={{color:"#7a5a9a",fontSize:10,textAlign:"center",marginTop:40}}>Команда обсуждает...</div>}
               {teamDiscussion.map((m,i)=>{
-                const agentDef=AGENTS.find(a=>a.id===m.agentId);
-                const color=agentDef?.shirtColor||"#c084fc";
+                const color=AGENTS.find(a=>a.id===m.agentId)?.shirtColor||"#c084fc";
                 return(
                   <div key={i} style={{display:"flex",flexDirection:"column",gap:2}}>
                     <div style={{display:"flex",alignItems:"center",gap:5}}>
                       <div style={{width:8,height:8,borderRadius:"50%",background:color,flexShrink:0}}/>
-                      <span style={{fontSize:9,color:color,fontWeight:"bold"}}>{m.agentName}</span>
+                      <span style={{fontSize:9,color,fontWeight:"bold"}}>{m.agentName}</span>
                       <span style={{fontSize:8,color:"#5a4a7a"}}>{m.role}</span>
                     </div>
                     <div style={{padding:"5px 9px",borderRadius:6,fontSize:11,lineHeight:1.5,
-                      background:"#1a0a2a",border:`1px solid ${color}44`,
-                      color:"#d4b8f0",whiteSpace:"pre-wrap",wordBreak:"break-word",marginLeft:13}}>
-                      {m.text}
-                    </div>
+                      background:"#1a0a2a",border:`1px solid ${color}44`,color:"#d4b8f0",
+                      whiteSpace:"pre-wrap",wordBreak:"break-word",marginLeft:13}}>{m.text}</div>
                   </div>
                 );
               })}
@@ -749,47 +688,38 @@ export default function Home(){
         )}
 
         {selAgent&&!showTeamChat&&(
-          <div style={{width:310,display:"flex",flexDirection:"column",background:"#1a1208",
-            borderLeft:`3px solid ${selAgent.shirtColor}`,flexShrink:0}}>
+          <div style={{width:310,display:"flex",flexDirection:"column",background:"#1a1208",borderLeft:`3px solid ${selAgent.shirtColor}`,flexShrink:0}}>
             <div style={{padding:"8px 12px",borderBottom:`2px solid ${selAgent.shirtColor}44`,background:"#221a0a",display:"flex",alignItems:"center",gap:8}}>
               <div style={{flex:1}}>
                 <div style={{fontWeight:"bold",fontSize:13,color:selAgent.shirtColor}}>{selAgent.name}</div>
-                <div style={{fontSize:9,color:"#7a6830"}}>{selAgent.role} Engineer</div>
+                <div style={{fontSize:9,color:"#7a6830"}}>{selAgent.role}</div>
               </div>
               {chatHist.length>0&&(
                 <button onClick={()=>clearHistory(selAgent.id)}
-                  title="Очистить историю"
-                  style={{background:"#3a1a1a",border:"1px solid #5a2a2a",borderRadius:3,
-                    padding:"2px 6px",color:"#f87171",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>очистить</button>
+                  style={{background:"#3a1a1a",border:"1px solid #5a2a2a",borderRadius:3,padding:"2px 6px",color:"#f87171",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>очистить</button>
               )}
             </div>
             <div style={{flex:1,overflowY:"auto",padding:8,display:"flex",flexDirection:"column",gap:6}}>
               {chatHist.length===0&&(
                 <div style={{color:"#4a3a10",fontSize:10,textAlign:"center",marginTop:40,lineHeight:1.6}}>
-                  Дай задание {selAgent.name}<br/>
-                  {hasGithub&&<span style={{color:"#3a6a3a"}}>GitHub подключён — он может создавать репо и файлы</span>}
+                  Дай задание {selAgent.name}
+                  {hasGithub&&<><br/><span style={{color:"#3a6a3a"}}>GitHub подключён</span></>}
                 </div>
               )}
               {chatHist.map((m,i)=>(
                 <div key={i}>
                   {m.role==="system"?(
-                    <div style={{fontSize:9,color:"#5a8a5a",textAlign:"center",padding:"2px 6px",
-                      background:"#0a1a0a",borderRadius:4,border:"1px solid #2a4a2a"}}>{m.text}</div>
+                    <div style={{fontSize:9,color:"#5a8a5a",textAlign:"center",padding:"2px 6px",background:"#0a1a0a",borderRadius:4,border:"1px solid #2a4a2a"}}>{m.text}</div>
                   ):(
                     <div style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start"}}>
                       <div style={{maxWidth:"88%"}}>
                         <div style={{padding:"5px 9px",borderRadius:6,fontSize:11,lineHeight:1.5,
                           background:m.role==="user"?"#3a2a05":"#221a0a",
                           border:m.role==="model"?`1px solid ${selAgent.shirtColor}55`:"1px solid #3a2a05",
-                          color:m.role==="user"?"#f0d070":"#d4c090",whiteSpace:"pre-wrap",wordBreak:"break-word"}}>
-                          {m.text}
-                        </div>
+                          color:m.role==="user"?"#f0d070":"#d4c090",whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{m.text}</div>
                         {m.githubActions&&m.githubActions.length>0&&(
-                          <div style={{marginTop:3,padding:"3px 6px",background:"#0a1a0a",
-                            border:"1px solid #2a5a2a",borderRadius:4,fontSize:9,color:"#5aaa5a"}}>
-                            {m.githubActions.map((a,j)=>(
-                              <div key={j} style={{marginBottom:1}}>⚡ {a.slice(0,80)}</div>
-                            ))}
+                          <div style={{marginTop:3,padding:"3px 6px",background:"#0a1a0a",border:"1px solid #2a5a2a",borderRadius:4,fontSize:9,color:"#5aaa5a"}}>
+                            {m.githubActions.map((a,j)=>(<div key={j} style={{marginBottom:1}}>⚡ {a.slice(0,80)}</div>))}
                           </div>
                         )}
                       </div>
@@ -801,16 +731,13 @@ export default function Home(){
             <div style={{padding:8,borderTop:`2px solid ${selAgent.shirtColor}44`,display:"flex",gap:6}}>
               <input value={inputText} onChange={e=>setInputText(e.target.value)}
                 onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&sendMessage()}
-                placeholder={hasGithub?`Задание для ${selAgent.name} (можно попросить создать репо)…`:`Задание для ${selAgent.name}…`}
-                disabled={sending}
-                style={{flex:1,background:"#221a0a",border:`1px solid ${selAgent.shirtColor}55`,borderRadius:5,
-                  padding:"5px 9px",color:"#d4c090",fontSize:11,outline:"none",fontFamily:"inherit"}}/>
+                placeholder={`Задание для ${selAgent.name}…`} disabled={sending}
+                style={{flex:1,background:"#221a0a",border:`1px solid ${selAgent.shirtColor}55`,borderRadius:5,padding:"5px 9px",color:"#d4c090",fontSize:11,outline:"none",fontFamily:"inherit"}}/>
               <button onClick={sendMessage} disabled={sending||!inputText.trim()}
                 style={{background:selAgent.shirtColor,border:"none",borderRadius:5,padding:"5px 11px",
                   color:"#1a1208",fontWeight:"bold",fontSize:12,cursor:sending?"wait":"pointer",
                   opacity:sending||!inputText.trim()?0.5:1,fontFamily:"inherit"}}>
-                {sending?"…":"→"}
-              </button>
+                {sending?"…":"→"}</button>
             </div>
           </div>
         )}
