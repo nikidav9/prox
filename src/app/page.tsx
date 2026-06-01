@@ -566,34 +566,53 @@ function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setC
       {/* Content */}
       <div style={{flex:1,overflow:"hidden",display:"flex",flexDirection:"column"}}>
         {tab === "agents" ? (
-          /* Cards grid */
-          <div style={{flex:1,overflowY:"auto",padding:12,display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,alignContent:"start"}}>
-            {agents.map(agent => {
+          /* Compact list — messenger style */
+          <div style={{flex:1,overflowY:"auto"}}>
+            {agents.map((agent, idx) => {
               const hist = chatHistories[agent.id] || [];
-              const lastMsg = hist[hist.length - 1];
+              const lastMsg = hist.filter(m=>m.role!=="system").at(-1);
               const isBusy = sendingIds.has(agent.id);
+              const unread = hist.length > 0;
               return (
                 <div key={agent.id} onClick={() => setSelectedId(agent.id)}
-                  style={{background:"#13102a",border:`1.5px solid ${agent.shirtColor}44`,borderRadius:12,padding:"12px 10px",
-                    cursor:"pointer",display:"flex",flexDirection:"column",gap:8,
-                    boxShadow:hist.length ? `0 0 10px ${agent.shirtColor}22` : "none", minHeight:100}}>
-                  <div style={{display:"flex",alignItems:"center",gap:8}}>
-                    <div style={{width:38,height:38,borderRadius:"50%",background:agent.shirtColor,display:"flex",
-                      alignItems:"center",justifyContent:"center",fontWeight:"bold",fontSize:16,color:"#fff",flexShrink:0}}>
+                  style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",
+                    borderBottom:"1px solid #1a1530",cursor:"pointer",
+                    background:unread?"#13102a":"transparent",
+                    transition:"background 0.15s"}}
+                  onTouchStart={e=>(e.currentTarget.style.background="#1e1a35")}
+                  onTouchEnd={e=>(e.currentTarget.style.background=unread?"#13102a":"transparent")}>
+                  {/* Avatar with busy indicator */}
+                  <div style={{position:"relative",flexShrink:0}}>
+                    <div style={{width:46,height:46,borderRadius:"50%",background:agent.shirtColor,
+                      display:"flex",alignItems:"center",justifyContent:"center",
+                      fontWeight:"bold",fontSize:18,color:"#fff",
+                      boxShadow:isBusy?`0 0 12px ${agent.shirtColor}99`:`0 0 0 2px ${agent.shirtColor}33`}}>
                       {agent.name.charAt(0)}
                     </div>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontWeight:"bold",fontSize:12,color:agent.shirtColor,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{agent.name}</div>
-                      <div style={{fontSize:9,color:"#7a6090",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:1}}>{agent.role}</div>
-                    </div>
-                    {isBusy && <div style={{width:8,height:8,borderRadius:"50%",background:"#22c55e",flexShrink:0,boxShadow:"0 0 6px #22c55e"}}/>}
+                    {isBusy && <div style={{position:"absolute",bottom:1,right:1,width:12,height:12,borderRadius:"50%",
+                      background:"#22c55e",border:"2px solid #0d0d1a",boxShadow:"0 0 6px #22c55e"}}/>}
                   </div>
-                  {lastMsg && (
-                    <div style={{fontSize:10,color:"#8a7aa0",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",background:"#0d0d1a",borderRadius:6,padding:"4px 6px"}}>
-                      {lastMsg.role==="user"?"Вы: ":""}{lastMsg.text.slice(0,50)}{lastMsg.text.length>50?"…":""}
+                  {/* Name + last message */}
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:2}}>
+                      <span style={{fontWeight:"bold",fontSize:14,color:agent.shirtColor}}>{agent.name}</span>
+                      <span style={{fontSize:9,color:"#3a2a5a",flexShrink:0,marginLeft:8}}>{agent.role}</span>
+                    </div>
+                    <div style={{fontSize:12,color:"#5a4a7a",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                      {isBusy ? <span style={{color:"#22c55e"}}>печатает…</span>
+                        : lastMsg ? <>{lastMsg.role==="user"&&<span style={{color:"#3a2a5a"}}>Вы: </span>}{lastMsg.text.replace(/```[\s\S]*?```/g,"[код]").slice(0,55)}{lastMsg.text.length>55?"…":""}</>
+                        : <span style={{color:"#2a1a3a",fontStyle:"italic"}}>нет сообщений</span>}
+                    </div>
+                  </div>
+                  {/* Message count badge */}
+                  {hist.length > 0 && (
+                    <div style={{background:agent.shirtColor,borderRadius:10,minWidth:20,height:20,
+                      display:"flex",alignItems:"center",justifyContent:"center",
+                      fontSize:10,fontWeight:"bold",color:"#fff",padding:"0 5px",flexShrink:0}}>
+                      {hist.length}
                     </div>
                   )}
-                  {hist.length > 0 && <div style={{fontSize:9,color:"#5a4a7a"}}>{hist.length} сообщ.</div>}
+                  <span style={{color:"#2a1a3a",fontSize:14,flexShrink:0}}>›</span>
                 </div>
               );
             })}
