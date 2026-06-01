@@ -321,7 +321,7 @@ function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setC
   }, [chatHist]);
 
   async function sendMessage() {
-    if (!inputText.trim() || !selectedId || localSending || sendingIds.has(selectedId)) return;
+    if (!inputText.trim() || !selectedId || localSending || (!!selectedId && sendingIds.has(selectedId))) return;
     const msg = inputText.trim();
     setInputText("");
     setLocalSending(true);
@@ -396,14 +396,14 @@ function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setC
         <div style={{padding:"10px 12px",borderTop:`2px solid ${selAgent.shirtColor}33`,background:"#13102a",display:"flex",gap:8,flexShrink:0}}>
           <input value={inputText} onChange={e => setInputText(e.target.value)}
             onKeyDown={e => e.key==="Enter" && !e.shiftKey && sendMessage()}
-            placeholder={`Задание для ${selAgent.name}…`} disabled={localSending || sendingIds.has(selectedId)}
+            placeholder={`Задание для ${selAgent.name}…`} disabled={localSending || (!!selectedId && (!!selectedId && sendingIds.has(selectedId)))}
             style={{flex:1,background:"#1a1035",border:`1px solid ${selAgent.shirtColor}55`,borderRadius:10,padding:"10px 14px",
               color:"#d4c8f0",fontSize:14,outline:"none",fontFamily:"inherit"}}/>
-          <button onClick={sendMessage} disabled={localSending || sendingIds.has(selectedId) || !inputText.trim()}
+          <button onClick={sendMessage} disabled={localSending || (!!selectedId && sendingIds.has(selectedId)) || !inputText.trim()}
             style={{background:selAgent.shirtColor,border:"none",borderRadius:10,padding:"10px 16px",
               color:"#fff",fontWeight:"bold",fontSize:16,cursor:(localSending||!inputText.trim())?"default":"pointer",
-              opacity:(localSending||sendingIds.has(selectedId)||!inputText.trim())?0.5:1,flexShrink:0}}>
-            {(localSending || sendingIds.has(selectedId)) ? "…" : "→"}
+              opacity:(localSending||(!!selectedId && sendingIds.has(selectedId))||!inputText.trim())?0.5:1,flexShrink:0}}>
+            {(localSending || (!!selectedId && sendingIds.has(selectedId))) ? "…" : "→"}
           </button>
         </div>
       </div>
@@ -658,6 +658,7 @@ export default function Home(){
   const dispatchTask = useCallback(async(agentId:string, msg:string, history:ChatMsg[])=>{
     if(sendingRef.current.has(agentId))return;
     sendingRef.current.add(agentId);
+    setSendingIds(s=>{const n=new Set(s);n.add(agentId);return n;});
     const ag=agentsRef.current.find(a=>a.def.id===agentId);
     if(ag){ag.state="type";ag.dir=SEATS[ag.seatI].dir;ag.busy=true;ag.bubble=null;}
     const taskId=`${agentId}-${Date.now()}`;
@@ -724,6 +725,7 @@ export default function Home(){
       if(consultTarget){consultTarget.state="idle";consultTarget.busy=false;}
     }finally{
       sendingRef.current.delete(agentId);
+      setSendingIds(s=>{const n=new Set(s);n.delete(agentId);return n;});
       if(agentId===selectedId)setSending(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -778,6 +780,10 @@ export default function Home(){
   const chatHist=selectedId?chatHistories[selectedId]||[]:[];
   const hasGithub=!!githubToken;
   const totalMsgs=Object.values(chatHistories).reduce((s,h)=>s+h.length,0);
+
+  if(isMobile){
+    return <MobileLayout agents={AGENTS} chatHistories={chatHistories} sending={sending} sendingIds={sendingIds} onSend={dispatchTask} setChatHistories={setChatHistories}/>;
+  }
 
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100vh",background:"#12120f",fontFamily:"'Courier New',monospace",color:"#e2e8f0",overflow:"hidden"}}>
