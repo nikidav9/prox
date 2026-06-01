@@ -306,9 +306,45 @@ interface MobileLayoutProps {
   onSend: (agentId: string, msg: string, history: ChatMsg[]) => Promise<void>;
   setChatHistories: React.Dispatch<React.SetStateAction<Record<string,ChatMsg[]>>>;
   githubToken: string;
+  setGithubToken: (t: string) => void;
 }
 
-function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setChatHistories, githubToken }: MobileLayoutProps) {
+function CodeBlock({ code, lang }: { code: string; lang?: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div style={{position:"relative",margin:"6px 0",borderRadius:8,overflow:"hidden",background:"#0d0d1a",border:"1px solid #2a1a4a"}}>
+      {lang && <div style={{padding:"3px 10px",background:"#1a1035",fontSize:9,color:"#7a6090",borderBottom:"1px solid #2a1a4a"}}>{lang}</div>}
+      <pre style={{margin:0,padding:"10px 12px",overflowX:"auto",fontSize:12,lineHeight:1.5,color:"#c4b5fd",fontFamily:"'Courier New',monospace",whiteSpace:"pre"}}>
+        {code}
+      </pre>
+      <button onClick={()=>{navigator.clipboard.writeText(code);setCopied(true);setTimeout(()=>setCopied(false),1500);}}
+        style={{position:"absolute",top:lang?28:6,right:6,background:"#2a1a4a",border:"none",borderRadius:4,padding:"3px 8px",fontSize:9,color:copied?"#22c55e":"#7a6090",cursor:"pointer",fontFamily:"inherit"}}>
+        {copied?"✓ скопировано":"копировать"}
+      </button>
+    </div>
+  );
+}
+
+function MessageText({ text }: { text: string }) {
+  // Split text into code blocks and plain text
+  const parts: {type:"text"|"code"; content:string; lang?:string}[] = [];
+  const regex = /```(\w*)\n?([\s\S]*?)```/g;
+  let last = 0, m;
+  while ((m = regex.exec(text)) !== null) {
+    if (m.index > last) parts.push({type:"text", content: text.slice(last, m.index)});
+    parts.push({type:"code", content: m[2].trim(), lang: m[1]||undefined});
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) parts.push({type:"text", content: text.slice(last)});
+  return (
+    <>{parts.map((p,i) => p.type==="code"
+      ? <CodeBlock key={i} code={p.content} lang={p.lang}/>
+      : <span key={i} style={{whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{p.content}</span>
+    )}</>
+  );
+}
+
+function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setChatHistories, githubToken, setGithubToken }: MobileLayoutProps) {
   const [tab, setTab] = useState<"agents"|"team">("agents");
   const [selectedId, setSelectedId] = useState<string|null>(null);
   const [inputText, setInputText] = useState("");
@@ -316,6 +352,8 @@ function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setC
   const [teamTopic, setTeamTopic] = useState("");
   const [teamLoading, setTeamLoading] = useState(false);
   const [teamDiscussion, setTeamDiscussion] = useState<{agentId:string;agentName:string;role:string;text:string}[]>([]);
+  const [showSettings, setShowSettings] = useState(false);
+  const [tokenDraft, setTokenDraft] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
   const teamEndRef = useRef<HTMLDivElement>(null);
 
@@ -355,34 +393,46 @@ function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setC
   }
 
   if (selAgent) {
-    // Fullscreen chat view
+    const isBusy = localSending || sendingIds.has(selAgent.id);
     return (
       <div style={{display:"flex",flexDirection:"column",height:"100dvh",background:"#0d0d1a",fontFamily:"'Courier New',monospace",color:"#e2e8f0"}}>
         {/* Chat header */}
-        <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 16px",background:"#13102a",borderBottom:`2px solid ${selAgent.shirtColor}55`,flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:"#13102a",borderBottom:`2px solid ${selAgent.shirtColor}55`,flexShrink:0}}>
           <button onClick={() => setSelectedId(null)}
-            style={{background:"#1a1035",border:`1px solid ${selAgent.shirtColor}55`,borderRadius:8,padding:"6px 12px",color:selAgent.shirtColor,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>
-            ← Назад
+            style={{background:"none",border:"none",color:selAgent.shirtColor,fontSize:20,cursor:"pointer",padding:"0 4px",lineHeight:1}}>
+            ←
           </button>
-          <div style={{width:36,height:36,borderRadius:"50%",background:selAgent.shirtColor,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:"bold",fontSize:15,color:"#fff",flexShrink:0}}>
+          <div style={{width:34,height:34,borderRadius:"50%",background:selAgent.shirtColor,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:"bold",fontSize:14,color:"#fff",flexShrink:0,
+            boxShadow:isBusy?`0 0 10px ${selAgent.shirtColor}88`:"none"}}>
             {selAgent.name.charAt(0)}
           </div>
           <div style={{flex:1,minWidth:0}}>
-            <div style={{fontWeight:"bold",fontSize:14,color:selAgent.shirtColor,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{selAgent.name}</div>
-            <div style={{fontSize:10,color:"#7a6090",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{selAgent.role}</div>
+            <div style={{fontWeight:"bold",fontSize:14,color:selAgent.shirtColor}}>{selAgent.name}</div>
+            <div style={{fontSize:10,color:"#7a6090"}}>{selAgent.role}{isBusy?" · думает…":""}</div>
           </div>
+          {!githubToken && (
+            <button onClick={() => { setShowSettings(true); setSelectedId(null); }}
+              style={{background:"#1a1000",border:"1px solid #fbbf2444",borderRadius:6,padding:"4px 8px",color:"#fbbf24",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>
+              + GitHub
+            </button>
+          )}
           {chatHist.length > 0 && (
             <button onClick={() => clearHistory(selAgent.id)}
               style={{background:"#2a1020",border:"1px solid #5a2040",borderRadius:6,padding:"4px 8px",color:"#f87171",fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>
-              Очистить
+              🗑
             </button>
           )}
         </div>
         {/* Messages */}
         <div style={{flex:1,overflowY:"auto",padding:"12px 16px",display:"flex",flexDirection:"column",gap:8}}>
           {chatHist.length === 0 && (
-            <div style={{color:"#3a2a5a",fontSize:12,textAlign:"center",marginTop:60,lineHeight:1.8}}>
-              Напиши задание для {selAgent.name}
+            <div style={{color:"#3a2a5a",fontSize:12,textAlign:"center",marginTop:60,lineHeight:2}}>
+              <div style={{fontSize:28,marginBottom:8}}>{selAgent.name.charAt(0)}</div>
+              <div style={{color:"#5a4a7a"}}>Напиши задание для <span style={{color:selAgent.shirtColor}}>{selAgent.name}</span></div>
+              <div style={{color:"#3a2a5a",marginTop:8,fontSize:10}}>Можно вставить код, ссылки, задачи</div>
+              {!githubToken && <div style={{marginTop:12,padding:"8px 12px",background:"#1a1000",border:"1px solid #fbbf2422",borderRadius:8,fontSize:10,color:"#fbbf24"}}>
+                💡 Подключи GitHub чтобы агент мог создавать репозитории и файлы
+              </div>}
             </div>
           )}
           {chatHist.map((m, i) => (
@@ -390,18 +440,20 @@ function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setC
               {m.role === "system" ? (
                 <div style={{fontSize:10,color:"#5a8a5a",textAlign:"center",padding:"4px 8px",background:"#0a1a0a",borderRadius:6,border:"1px solid #2a4a2a"}}>{m.text}</div>
               ) : (
-                <div style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start"}}>
-                  <div style={{maxWidth:"85%"}}>
-                    <div style={{padding:"8px 12px",borderRadius:12,fontSize:13,lineHeight:1.55,
+                <div style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start",alignItems:"flex-end",gap:6}}>
+                  {m.role==="model" && <div style={{width:24,height:24,borderRadius:"50%",background:selAgent.shirtColor,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:"bold",color:"#fff",flexShrink:0}}>{selAgent.name.charAt(0)}</div>}
+                  <div style={{maxWidth:"88%"}}>
+                    <div style={{padding:"8px 12px",borderRadius:12,fontSize:13,lineHeight:1.6,
                       background:m.role==="user"?"#2a1a4a":"#1a1035",
-                      border:m.role==="model"?`1px solid ${selAgent.shirtColor}44`:"none",
+                      border:m.role==="model"?`1px solid ${selAgent.shirtColor}33`:"none",
                       color:m.role==="user"?"#c4a8f0":"#d4c8f0",
-                      borderTopRightRadius:m.role==="user"?4:12,
-                      borderTopLeftRadius:m.role==="model"?4:12,
-                      whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{m.text}</div>
+                      borderBottomRightRadius:m.role==="user"?2:12,
+                      borderBottomLeftRadius:m.role==="model"?2:12}}>
+                      <MessageText text={m.text}/>
+                    </div>
                     {m.githubActions && m.githubActions.length > 0 && (
-                      <div style={{marginTop:4,padding:"4px 8px",background:"#0a1a0a",border:"1px solid #2a5a2a",borderRadius:6,fontSize:10,color:"#5aaa5a"}}>
-                        {m.githubActions.map((a,j) => (<div key={j}>⚡ {a.slice(0,80)}</div>))}
+                      <div style={{marginTop:4,padding:"6px 10px",background:"#0a1a0a",border:"1px solid #2a5a2a",borderRadius:8,fontSize:10,color:"#5aaa5a"}}>
+                        {m.githubActions.map((a,j) => (<div key={j} style={{padding:"1px 0"}}>⚡ {a.slice(0,100)}</div>))}
                       </div>
                     )}
                   </div>
@@ -409,21 +461,30 @@ function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setC
               )}
             </div>
           ))}
+          {isBusy && <div style={{display:"flex",gap:6,alignItems:"center",padding:"4px 0"}}>
+            <div style={{width:24,height:24,borderRadius:"50%",background:selAgent.shirtColor,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:"bold",color:"#fff",flexShrink:0}}>{selAgent.name.charAt(0)}</div>
+            <div style={{background:"#1a1035",border:`1px solid ${selAgent.shirtColor}33`,borderRadius:12,borderBottomLeftRadius:2,padding:"10px 16px",fontSize:16,letterSpacing:4,color:selAgent.shirtColor}}>•••</div>
+          </div>}
           <div ref={chatEndRef}/>
         </div>
         {/* Input */}
-        <div style={{padding:"10px 12px",borderTop:`2px solid ${selAgent.shirtColor}33`,background:"#13102a",display:"flex",gap:8,flexShrink:0}}>
-          <input value={inputText} onChange={e => setInputText(e.target.value)}
-            onKeyDown={e => e.key==="Enter" && !e.shiftKey && sendMessage()}
-            placeholder={`Задание для ${selAgent.name}…`} disabled={localSending || (!!selectedId && (!!selectedId && sendingIds.has(selectedId)))}
-            style={{flex:1,background:"#1a1035",border:`1px solid ${selAgent.shirtColor}55`,borderRadius:10,padding:"10px 14px",
-              color:"#d4c8f0",fontSize:14,outline:"none",fontFamily:"inherit"}}/>
-          <button onClick={sendMessage} disabled={localSending || (!!selectedId && sendingIds.has(selectedId)) || !inputText.trim()}
-            style={{background:selAgent.shirtColor,border:"none",borderRadius:10,padding:"10px 16px",
-              color:"#fff",fontWeight:"bold",fontSize:16,cursor:(localSending||!inputText.trim())?"default":"pointer",
-              opacity:(localSending||(!!selectedId && sendingIds.has(selectedId))||!inputText.trim())?0.5:1,flexShrink:0}}>
-            {(localSending || (!!selectedId && sendingIds.has(selectedId))) ? "…" : "→"}
-          </button>
+        <div style={{padding:"8px 12px",borderTop:`1px solid ${selAgent.shirtColor}22`,background:"#13102a",flexShrink:0}}>
+          <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
+            <textarea value={inputText} onChange={e => setInputText(e.target.value)}
+              onKeyDown={e => { if(e.key==="Enter" && !e.shiftKey){ e.preventDefault(); sendMessage(); } }}
+              placeholder={`Сообщение для ${selAgent.name}…\nShift+Enter — новая строка`}
+              disabled={isBusy} rows={1}
+              style={{flex:1,background:"#1a1035",border:`1px solid ${selAgent.shirtColor}44`,borderRadius:12,padding:"10px 14px",
+                color:"#d4c8f0",fontSize:14,outline:"none",fontFamily:"'Courier New',monospace",resize:"none",
+                minHeight:44,maxHeight:140,overflowY:"auto",lineHeight:1.5}}/>
+            <button onClick={sendMessage} disabled={isBusy || !inputText.trim()}
+              style={{background:selAgent.shirtColor,border:"none",borderRadius:12,padding:"10px 16px",
+                color:"#fff",fontWeight:"bold",fontSize:18,cursor:isBusy||!inputText.trim()?"default":"pointer",
+                opacity:isBusy||!inputText.trim()?0.4:1,flexShrink:0,height:44}}>
+              {isBusy ? "…" : "↑"}
+            </button>
+          </div>
+          {githubToken && <div style={{fontSize:9,color:"#22c55e",textAlign:"center",marginTop:4}}>● GitHub подключён</div>}
         </div>
       </div>
     );
@@ -438,17 +499,67 @@ function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setC
 
   return (
     <div style={{display:"flex",flexDirection:"column",height:"100dvh",background:"#0d0d1a",fontFamily:"'Courier New',monospace",color:"#e2e8f0"}}>
+      {/* Settings modal */}
+      {showSettings && (
+        <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:100,display:"flex",flexDirection:"column",justifyContent:"flex-end"}}
+          onClick={e => { if(e.target===e.currentTarget) setShowSettings(false); }}>
+          <div style={{background:"#13102a",borderRadius:"20px 20px 0 0",padding:"20px 20px 40px",border:"1px solid #2a1a4a"}}>
+            <div style={{width:40,height:4,background:"#3a2a5a",borderRadius:2,margin:"0 auto 20px"}}/>
+            <div style={{fontSize:16,fontWeight:"bold",color:"#a78bfa",marginBottom:16}}>⚙️ Настройки</div>
+
+            {/* GitHub token */}
+            <div style={{marginBottom:20}}>
+              <div style={{fontSize:12,color:"#7a6090",marginBottom:6}}>GitHub токен</div>
+              <div style={{fontSize:10,color:"#5a4a7a",marginBottom:8,lineHeight:1.5}}>
+                Позволяет агентам создавать репозитории, файлы, ветки и задачи прямо в чате
+              </div>
+              <input value={tokenDraft} onChange={e => setTokenDraft(e.target.value)}
+                placeholder="ghp_xxxxxxxxxxxxxxxxxx"
+                type="password"
+                style={{width:"100%",background:"#1a1035",border:"1px solid #3a2a6a",borderRadius:10,padding:"10px 14px",
+                  color:"#d4c8f0",fontSize:13,outline:"none",fontFamily:"'Courier New',monospace",boxSizing:"border-box"}}/>
+              {githubToken && <div style={{fontSize:10,color:"#22c55e",marginTop:4}}>● Токен подключён</div>}
+            </div>
+
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={() => { setGithubToken(tokenDraft.trim()); setShowSettings(false); }}
+                style={{flex:1,background:"#7c3aed",border:"none",borderRadius:10,padding:"12px",color:"#fff",fontWeight:"bold",fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>
+                Сохранить
+              </button>
+              {githubToken && <button onClick={() => { setGithubToken(""); setTokenDraft(""); }}
+                style={{background:"#2a1020",border:"1px solid #5a2040",borderRadius:10,padding:"12px 16px",color:"#f87171",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>
+                Удалить
+              </button>}
+            </div>
+
+            <div style={{marginTop:20,padding:"12px",background:"#0d0d1a",borderRadius:10,border:"1px solid #2a1a4a"}}>
+              <div style={{fontSize:10,color:"#5a4a7a",lineHeight:1.7}}>
+                <div style={{color:"#7a6090",marginBottom:4,fontWeight:"bold"}}>Что умеют агенты с GitHub:</div>
+                <div>✦ Создавать репозитории и ветки</div>
+                <div>✦ Писать и обновлять файлы с кодом</div>
+                <div>✦ Создавать задачи (issues)</div>
+                <div>✦ Смотреть существующий код</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
-      <div style={{padding:"12px 16px 8px",background:"#13102a",borderBottom:"2px solid #2a1a4a",flexShrink:0}}>
+      <div style={{padding:"12px 16px 8px",background:"#13102a",borderBottom:"1px solid #2a1a4a",flexShrink:0}}>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
-          <span style={{fontSize:18,fontWeight:"bold",letterSpacing:1,color:"#a78bfa"}}>Dev Office</span>
-          <div style={{display:"flex",gap:4,flexWrap:"wrap",flex:1}}>
+          <span style={{fontSize:16,fontWeight:"bold",letterSpacing:1,color:"#a78bfa"}}>Dev Office</span>
+          <div style={{display:"flex",gap:3,flexWrap:"wrap",flex:1}}>
             {agents.map(a => (
-              <div key={a.id} style={{width:7,height:7,borderRadius:"50%",background:a.shirtColor,
+              <div key={a.id} style={{width:6,height:6,borderRadius:"50%",background:a.shirtColor,
                 boxShadow:sendingIds.has(a.id) ? `0 0 5px ${a.shirtColor}` : "none"}}/>
             ))}
           </div>
-          {githubToken && <span style={{fontSize:9,color:"#22c55e",border:"1px solid #22c55e44",borderRadius:4,padding:"2px 5px"}}>GitHub ✓</span>}
+          {githubToken && <span style={{fontSize:9,color:"#22c55e"}}>● GitHub</span>}
+          <button onClick={() => { setShowSettings(true); setTokenDraft(githubToken); }}
+            style={{background:"none",border:"1px solid #3a2a5a",borderRadius:8,padding:"5px 10px",color:"#7a6090",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>
+            ⚙️
+          </button>
         </div>
       </div>
 
@@ -885,7 +996,7 @@ export default function Home(){
   const totalMsgs=Object.values(chatHistories).reduce((s,h)=>s+h.length,0);
 
   if(isMobile){
-    return <MobileLayout agents={AGENTS} chatHistories={chatHistories} sending={sending} sendingIds={sendingIds} onSend={dispatchTask} setChatHistories={setChatHistories} githubToken={githubToken}/>;
+    return <MobileLayout agents={AGENTS} chatHistories={chatHistories} sending={sending} sendingIds={sendingIds} onSend={dispatchTask} setChatHistories={setChatHistories} githubToken={githubToken} setGithubToken={setGithubToken}/>;
   }
 
   return(
