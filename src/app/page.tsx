@@ -780,39 +780,8 @@ export default function Home(){
 
   useEffect(() => {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').then(() => {
-        navigator.serviceWorker.addEventListener('message', (event) => {
-          if (event.data?.type === 'TASK_DONE') {
-            const { agentId, result } = event.data;
-            const reply = (result.text as string) || '...';
-            const acts: string[] | undefined = result.githubActions;
-            setChatHistories(p => ({
-              ...p,
-              [agentId]: [...(p[agentId] || []), { role: 'model' as const, text: reply, ...(acts ? { githubActions: acts } : {}) }],
-            }));
-          }
-        });
-      }).catch(() => {});
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
     }
-  }, []);
-
-  useEffect(() => {
-    idbGetAll().then(tasks => {
-      for (const task of tasks) {
-        if (task.status === 'done' && task.result) {
-          const result = task.result as { text?: string; githubActions?: string[] };
-          const reply = result.text || '...';
-          const acts = result.githubActions;
-          setChatHistories(p => {
-            const existing = p[task.agentId as string] || [];
-            const last = existing[existing.length - 1];
-            if (last?.role === 'model' && last.text === reply) return p;
-            return { ...p, [task.agentId as string]: [...existing, { role: 'model' as const, text: reply, ...(acts ? { githubActions: acts } : {}) }] };
-          });
-          idbDelete(task.id as string);
-        }
-      }
-    }).catch(() => {});
   }, []);
 
   useEffect(()=>{ try{localStorage.setItem("dev_office_history",JSON.stringify(chatHistories));}catch{} },[chatHistories]);
@@ -890,20 +859,7 @@ export default function Home(){
     setSendingIds(s=>{const n=new Set(s);n.add(agentId);return n;});
     const ag=agentsRef.current.find(a=>a.def.id===agentId);
     if(ag){ag.state="type";ag.dir=SEATS[ag.seatI].dir;ag.busy=true;ag.bubble=null;}
-    const taskId=`${agentId}-${Date.now()}`;
     const apiHistory=history.filter(m=>m.role==="user"||m.role==="model").map(m=>({role:m.role as "user"|"model",text:m.text}));
-    await idbPut({id:taskId,agentId,message:msg,history:apiHistory,githubToken,status:'pending',createdAt:Date.now()});
-    if('serviceWorker' in navigator){
-      navigator.serviceWorker.ready.then(reg=>{
-        if('sync' in reg){
-          (reg as ServiceWorkerRegistration&{sync:{register:(tag:string)=>Promise<void>}}).sync.register('process-tasks').catch(()=>{
-            navigator.serviceWorker.controller?.postMessage({type:'PROCESS_NOW'});
-          });
-        }else{navigator.serviceWorker.controller?.postMessage({type:'PROCESS_NOW'});}
-      });
-    }
-    const consultDone=false;
-    void consultDone;
     const autoRetry=async(waitSecs:number)=>{
       let secs=waitSecs;
       setChatHistories(p=>({...p,[agentId]:[...(p[agentId]||[]),{role:"system",text:`⏳ Лимит запросов. Авто-повтор через ${secs} сек…`}]}));
@@ -931,7 +887,6 @@ export default function Home(){
       const res=await fetch("/api/agent",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({message:msg,agentId,history:apiHistory,githubToken})});
       const data=await res.json();
-      await idbDelete(taskId);
       if(res.status===429&&data.retryAfter){
         await autoRetry(Math.min(data.retryAfter,120));
         return;
