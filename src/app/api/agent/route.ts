@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI, Tool, SchemaType } from "@google/generative-ai";
+import Groq from "groq-sdk";
 import { NextRequest, NextResponse } from "next/server";
 import { AGENTS } from "@/lib/agents";
 import { loadHistory, saveHistory, ChatMsg } from "@/lib/supabase";
@@ -6,6 +7,7 @@ import { loadHistory, saveHistory, ChatMsg } from "@/lib/supabase";
 export const maxDuration = 60;
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
 
 async function githubFetch(token: string, path: string, method = "GET", body?: object) {
   const res = await fetch(`https://api.github.com${path}`, {
@@ -228,35 +230,69 @@ export async function POST(req: NextRequest) {
       throw new Error("Max retries exceeded");
     }
 
-    let result = await sendWithRetry(message);
+    let text = "";
     const githubActions: string[] = [];
+    let usedGroq = false;
 
-    for (let i = 0; i < 6 && hasGithub; i++) {
-      const parts = result.response.candidates?.[0]?.content?.parts ?? [];
-      const calls = parts.filter((p) => p.functionCall);
-      if (calls.length === 0) break;
+    try {
+      let result = await sendWithRetry(message);
 
-      const responses = await Promise.all(
-        calls.map(async (part) => {
-          const fc = part.functionCall!;
-          const toolResult = await runGithubTool(fc.name, fc.args as Record<string, unknown>, githubToken);
-          const summary = JSON.stringify(toolResult);
-          githubActions.push(`${fc.name}: ${summary.slice(0, 150)}`);
-          return { functionResponse: { name: fc.name, response: toolResult } };
-        })
-      );
-      result = await sendWithRetry(responses as Parameters<typeof chat.sendMessage>[0]);
+      for (let i = 0; i < 6 && hasGithub; i++) {
+        const parts = result.response.candidates?.[0]?.content?.parts ?? [];
+        const calls = parts.filter((p) => p.functionCall);
+        if (calls.length === 0) break;
+
+        const responses = await Promise.all(
+          calls.map(async (part) => {
+            const fc = part.functionCall!;
+            const toolResult = await runGithubTool(fc.name, fc.args as Record<string, unknown>, githubToken);
+            const summary = JSON.stringify(toolResult);
+            githubActions.push(`${fc.name}: ${summary.slice(0, 150)}`);
+            return { functionResponse: { name: fc.name, response: toolResult } };
+          })
+        );
+        result = await sendWithRetry(responses as Parameters<typeof chat.sendMessage>[0]);
+      }
+
+      text = result.response.text();
+    } catch (geminiErr) {
+      const geminiMsg = String(geminiErr);
+      const isQuota = geminiMsg.includes("429") || geminiMsg.includes("quota") || geminiMsg.includes("RESOURCE_EXHAUSTED");
+
+      if (isQuota && groq) {
+        // Fallback to Groq
+        usedGroq = true;
+        const groqHistory = (history || []).map((m: { role: string; text: string }) => ({
+          role: m.role === "model" ? "assistant" : "user" as "user" | "assistant",
+          content: m.text,
+        }));
+        const groqRes = await groq.chat.completions.create({
+          model: "llama-3.3-70b-versatile",
+          messages: [
+            { role: "system", content: systemInstruction },
+            ...groqHistory,
+            { role: "user", content: message },
+          ],
+          max_tokens: 1024,
+        });
+        text = groqRes.choices[0]?.message?.content || "Нет ответа";
+      } else {
+        throw geminiErr;
+      }
     }
 
-    const text = result.response.text();
-
-    // Persist to Redis so history survives browser close
+    // Persist to Supabase
     const stored: ChatMsg[] = await loadHistory(agentId);
     const userMsg: ChatMsg = { role: "user", text: message };
     const botMsg: ChatMsg = { role: "model", text, ...(githubActions.length ? { githubActions } : {}) };
     await saveHistory(agentId, [...stored, userMsg, botMsg]);
 
-    return NextResponse.json({ text, agentName: agent.name, githubActions: githubActions.length ? githubActions : undefined });
+    return NextResponse.json({
+      text,
+      agentName: agent.name,
+      githubActions: githubActions.length ? githubActions : undefined,
+      ...(usedGroq ? { provider: "groq" } : {}),
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("Agent error:", msg);
