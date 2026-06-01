@@ -18,7 +18,7 @@ async function githubFetch(token: string, path: string, method = "GET", body?: o
   return res.json();
 }
 
-async function runGithubTool(name: string, args: Record<string, unknown>, token: string): Promise<unknown> {
+async function runGithubTool(name: string, args: Record<string, unknown>, token: string): Promise<object> {
   try {
     switch (name) {
       case "github_get_user":
@@ -37,7 +37,7 @@ async function runGithubTool(name: string, args: Record<string, unknown>, token:
         let sha: string | undefined;
         try {
           const ex = await githubFetch(token, `/repos/${args.owner}/${args.repo}/contents/${args.path}`);
-          if (ex.sha) sha = ex.sha as string;
+          if ((ex as Record<string,unknown>).sha) sha = (ex as Record<string,unknown>).sha as string;
         } catch {}
         return await githubFetch(token, `/repos/${args.owner}/${args.repo}/contents/${args.path}`, "PUT", {
           message: args.message ?? "Update file", content,
@@ -46,10 +46,10 @@ async function runGithubTool(name: string, args: Record<string, unknown>, token:
         });
       }
       case "github_create_branch": {
-        const repo = await githubFetch(token, `/repos/${args.owner}/${args.repo}`);
-        const ref = await githubFetch(token, `/repos/${args.owner}/${args.repo}/git/refs/heads/${repo.default_branch ?? "main"}`);
+        const repo = await githubFetch(token, `/repos/${args.owner}/${args.repo}`) as Record<string,unknown>;
+        const ref = await githubFetch(token, `/repos/${args.owner}/${args.repo}/git/refs/heads/${repo.default_branch ?? "main"}`) as Record<string,unknown>;
         return await githubFetch(token, `/repos/${args.owner}/${args.repo}/git/refs`, "POST", {
-          ref: `refs/heads/${args.branch}`, sha: ref.object?.sha,
+          ref: `refs/heads/${args.branch}`, sha: (ref.object as Record<string,unknown>)?.sha,
         });
       }
       case "github_list_issues":
@@ -224,7 +224,7 @@ export async function POST(req: NextRequest) {
           return { functionResponse: { name: fc.name, response: toolResult } };
         })
       );
-      result = await chat.sendMessage(responses);
+      result = await chat.sendMessage(responses as Parameters<typeof chat.sendMessage>[0]);
     }
 
     const text = result.response.text();
