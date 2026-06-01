@@ -276,7 +276,7 @@ export async function POST(req: NextRequest) {
     const model = genAI.getGenerativeModel({
       model: "gemini-2.0-flash",
       systemInstruction,
-      ...({ tools: [...GITHUB_TOOLS, CONSULT_TOOL] }),
+      tools: hasGithub ? [...GITHUB_TOOLS, CONSULT_TOOL] : [CONSULT_TOOL],
     });
 
     // Load stored history and compress if long
@@ -348,8 +348,9 @@ export async function POST(req: NextRequest) {
     } catch (geminiErr) {
       const geminiMsg = String(geminiErr);
       const isQuota = geminiMsg.includes("429") || geminiMsg.includes("quota") || geminiMsg.includes("RESOURCE_EXHAUSTED");
+      const isBadTool = geminiMsg.includes("400") || geminiMsg.includes("tool_use_failed") || geminiMsg.includes("Failed to call");
 
-      if (isQuota && groq) {
+      if ((isQuota || isBadTool) && groq) {
         usedGroq = true;
         const groqHistory = compressedHistory
           .filter(m => m.role === "user" || m.role === "model")
