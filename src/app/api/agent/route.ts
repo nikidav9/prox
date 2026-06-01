@@ -284,10 +284,10 @@ export async function POST(req: NextRequest) {
     const stored: ChatMsg[] = await loadHistory(agentId);
     const fullHistory: ChatMsg[] = stored.length > 0 ? stored : (history || []);
     const compressedHistory = await compressHistory(fullHistory);
-    // If compression happened, save it back so next call starts compressed
-    if (compressedHistory.length < fullHistory.length) {
-      await saveHistory(agentId, compressedHistory);
-    }
+    // Save user message immediately (before model call) so it's never lost on error
+    const userMsg: ChatMsg = { role: "user", text: message };
+    await saveHistory(agentId, [...compressedHistory, userMsg]);
+
     const trimmedHistory = compressedHistory.filter(m => m.role === "user" || m.role === "model");
 
     const chat = model.startChat({
@@ -421,8 +421,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Persist to Supabase (append to already-compressed history)
-    const userMsg: ChatMsg = { role: "user", text: message };
+    // Append bot reply (user message already saved before model call)
     const botMsg: ChatMsg = { role: "model", text, ...(githubActions.length ? { githubActions } : {}) };
     await saveHistory(agentId, [...compressedHistory, userMsg, botMsg]);
 

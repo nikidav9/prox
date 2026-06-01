@@ -755,10 +755,11 @@ export default function Home(){
         const data=await res.json();
         if(data&&typeof data==='object'){
           setChatHistories(prev=>{
-            // Merge: server wins for any agent not currently busy
             const merged={...prev};
             for(const [id,msgs] of Object.entries(data) as [string,ChatMsg[]][]){
-              if(!sendingRef.current.has(id)) merged[id]=msgs;
+              // Skip if agent is busy OR local has more messages (error/pending not yet saved)
+              const localLen=(prev[id]||[]).length;
+              if(!sendingRef.current.has(id) && msgs.length >= localLen) merged[id]=msgs;
             }
             return merged;
           });
