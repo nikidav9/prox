@@ -305,13 +305,32 @@ interface MobileLayoutProps {
   sendingIds: Set<string>;
   onSend: (agentId: string, msg: string, history: ChatMsg[]) => Promise<void>;
   setChatHistories: React.Dispatch<React.SetStateAction<Record<string,ChatMsg[]>>>;
+  githubToken: string;
 }
 
-function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setChatHistories }: MobileLayoutProps) {
+function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setChatHistories, githubToken }: MobileLayoutProps) {
+  const [tab, setTab] = useState<"agents"|"team">("agents");
   const [selectedId, setSelectedId] = useState<string|null>(null);
   const [inputText, setInputText] = useState("");
   const [localSending, setLocalSending] = useState(false);
+  const [teamTopic, setTeamTopic] = useState("");
+  const [teamLoading, setTeamLoading] = useState(false);
+  const [teamDiscussion, setTeamDiscussion] = useState<{agentId:string;agentName:string;role:string;text:string}[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const teamEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { teamEndRef.current?.scrollIntoView({ behavior:"smooth" }); }, [teamDiscussion]);
+
+  async function startTeamDiscussion() {
+    if (!teamTopic.trim() || teamLoading) return;
+    setTeamLoading(true); setTeamDiscussion([]);
+    try {
+      const res = await fetch('/api/team', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({topic:teamTopic}) });
+      const data = await res.json();
+      if (data.messages) setTeamDiscussion(data.messages);
+    } catch {}
+    setTeamLoading(false);
+  }
 
   const selAgent = agents.find(a => a.id === selectedId);
   const chatHist = selectedId ? chatHistories[selectedId] || [] : [];
@@ -410,60 +429,116 @@ function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setC
     );
   }
 
-  // Agent grid
+  const TAB_STYLE = (active: boolean) => ({
+    flex:1, background:"none", border:"none", color: active ? "#a78bfa" : "#5a4a7a",
+    fontSize:11, fontWeight: active ? "bold" as const : "normal" as const,
+    padding:"10px 0", cursor:"pointer", fontFamily:"inherit",
+    borderTop: active ? "2px solid #a78bfa" : "2px solid transparent",
+  });
+
   return (
     <div style={{display:"flex",flexDirection:"column",height:"100dvh",background:"#0d0d1a",fontFamily:"'Courier New',monospace",color:"#e2e8f0"}}>
       {/* Header */}
-      <div style={{padding:"14px 16px 10px",background:"#13102a",borderBottom:"2px solid #2a1a4a",flexShrink:0}}>
-        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
-          <span style={{fontSize:20,fontWeight:"bold",letterSpacing:1,color:"#a78bfa"}}>Dev Office</span>
-          <div style={{display:"flex",gap:5,flexWrap:"wrap",flex:1}}>
+      <div style={{padding:"12px 16px 8px",background:"#13102a",borderBottom:"2px solid #2a1a4a",flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontSize:18,fontWeight:"bold",letterSpacing:1,color:"#a78bfa"}}>Dev Office</span>
+          <div style={{display:"flex",gap:4,flexWrap:"wrap",flex:1}}>
             {agents.map(a => (
-              <div key={a.id} style={{width:8,height:8,borderRadius:"50%",background:a.shirtColor,
-                boxShadow:chatHistories[a.id]?.length ? `0 0 4px ${a.shirtColor}` : "none"}}/>
+              <div key={a.id} style={{width:7,height:7,borderRadius:"50%",background:a.shirtColor,
+                boxShadow:sendingIds.has(a.id) ? `0 0 5px ${a.shirtColor}` : "none"}}/>
             ))}
           </div>
+          {githubToken && <span style={{fontSize:9,color:"#22c55e",border:"1px solid #22c55e44",borderRadius:4,padding:"2px 5px"}}>GitHub ✓</span>}
         </div>
-        <div style={{fontSize:11,color:"#5a4a7a"}}>{agents.length} AI-агентов · нажми на карточку чтобы общаться</div>
       </div>
-      {/* Cards grid */}
-      <div style={{flex:1,overflowY:"auto",padding:12,display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,alignContent:"start"}}>
-        {agents.map(agent => {
-          const hist = chatHistories[agent.id] || [];
-          const lastMsg = hist[hist.length - 1];
-          const isBusy = sendingIds.has(agent.id);
-          return (
-            <div key={agent.id} onClick={() => setSelectedId(agent.id)}
-              style={{background:"#13102a",border:`1.5px solid ${agent.shirtColor}44`,borderRadius:12,padding:"12px 10px",
-                cursor:"pointer",transition:"all 0.15s",display:"flex",flexDirection:"column",gap:8,
-                boxShadow:hist.length ? `0 0 10px ${agent.shirtColor}22` : "none",
-                minHeight:100}}>
-              <div style={{display:"flex",alignItems:"center",gap:8}}>
-                <div style={{width:38,height:38,borderRadius:"50%",background:agent.shirtColor,display:"flex",
-                  alignItems:"center",justifyContent:"center",fontWeight:"bold",fontSize:16,color:"#fff",flexShrink:0}}>
-                  {agent.name.charAt(0)}
+
+      {/* Content */}
+      <div style={{flex:1,overflow:"hidden",display:"flex",flexDirection:"column"}}>
+        {tab === "agents" ? (
+          /* Cards grid */
+          <div style={{flex:1,overflowY:"auto",padding:12,display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,alignContent:"start"}}>
+            {agents.map(agent => {
+              const hist = chatHistories[agent.id] || [];
+              const lastMsg = hist[hist.length - 1];
+              const isBusy = sendingIds.has(agent.id);
+              return (
+                <div key={agent.id} onClick={() => setSelectedId(agent.id)}
+                  style={{background:"#13102a",border:`1.5px solid ${agent.shirtColor}44`,borderRadius:12,padding:"12px 10px",
+                    cursor:"pointer",display:"flex",flexDirection:"column",gap:8,
+                    boxShadow:hist.length ? `0 0 10px ${agent.shirtColor}22` : "none", minHeight:100}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <div style={{width:38,height:38,borderRadius:"50%",background:agent.shirtColor,display:"flex",
+                      alignItems:"center",justifyContent:"center",fontWeight:"bold",fontSize:16,color:"#fff",flexShrink:0}}>
+                      {agent.name.charAt(0)}
+                    </div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontWeight:"bold",fontSize:12,color:agent.shirtColor,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{agent.name}</div>
+                      <div style={{fontSize:9,color:"#7a6090",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:1}}>{agent.role}</div>
+                    </div>
+                    {isBusy && <div style={{width:8,height:8,borderRadius:"50%",background:"#22c55e",flexShrink:0,boxShadow:"0 0 6px #22c55e"}}/>}
+                  </div>
+                  {lastMsg && (
+                    <div style={{fontSize:10,color:"#8a7aa0",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",background:"#0d0d1a",borderRadius:6,padding:"4px 6px"}}>
+                      {lastMsg.role==="user"?"Вы: ":""}{lastMsg.text.slice(0,50)}{lastMsg.text.length>50?"…":""}
+                    </div>
+                  )}
+                  {hist.length > 0 && <div style={{fontSize:9,color:"#5a4a7a"}}>{hist.length} сообщ.</div>}
                 </div>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontWeight:"bold",fontSize:12,color:agent.shirtColor,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{agent.name}</div>
-                  <div style={{fontSize:9,color:"#7a6090",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:1}}>{agent.role}</div>
-                </div>
-                {isBusy && (
-                  <div style={{width:8,height:8,borderRadius:"50%",background:"#22c55e",flexShrink:0,
-                    boxShadow:"0 0 6px #22c55e",animation:"pulse 1s infinite"}}/>
-                )}
-              </div>
-              {lastMsg && (
-                <div style={{fontSize:10,color:"#8a7aa0",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",
-                  background:"#0d0d1a",borderRadius:6,padding:"4px 6px"}}>
-                  {lastMsg.role==="user"?"Вы: ":""}{lastMsg.text.slice(0, 50)}{lastMsg.text.length > 50 ? "…" : ""}
-                </div>
-              )}
-              {hist.length > 0 && (
-                <div style={{fontSize:9,color:"#5a4a7a"}}>{hist.length} сообщ.</div>
-              )}
+              );
+            })}
+          </div>
+        ) : (
+          /* Team chat */
+          <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+            <div style={{padding:"10px 14px",borderBottom:"1px solid #2a1a4a",background:"#13102a",flexShrink:0,display:"flex",gap:8}}>
+              <input value={teamTopic} onChange={e=>setTeamTopic(e.target.value)}
+                onKeyDown={e=>e.key==="Enter"&&startTeamDiscussion()}
+                placeholder="Тема для обсуждения всей командой…" disabled={teamLoading}
+                style={{flex:1,background:"#1a1035",border:"1px solid #5a3a8a",borderRadius:8,padding:"8px 12px",
+                  color:"#d4b8f0",fontSize:12,outline:"none",fontFamily:"inherit"}}/>
+              <button onClick={startTeamDiscussion} disabled={teamLoading||!teamTopic.trim()}
+                style={{background:"#7c3aed",border:"none",borderRadius:8,padding:"8px 14px",color:"#fff",
+                  fontWeight:"bold",fontSize:14,cursor:teamLoading?"wait":"pointer",
+                  opacity:teamLoading||!teamTopic.trim()?0.5:1,flexShrink:0,fontFamily:"inherit"}}>
+                {teamLoading?"…":"→"}
+              </button>
             </div>
-          );
-        })}
+            <div style={{flex:1,overflowY:"auto",padding:"12px 14px",display:"flex",flexDirection:"column",gap:10}}>
+              {teamDiscussion.length===0&&!teamLoading&&(
+                <div style={{color:"#3a2a5a",fontSize:12,textAlign:"center",marginTop:60,lineHeight:1.8}}>
+                  Напиши тему — вся команда обсудит её вместе
+                </div>
+              )}
+              {teamLoading&&<div style={{color:"#7a5a9a",fontSize:11,textAlign:"center",marginTop:40}}>Команда обсуждает…</div>}
+              {teamDiscussion.map((m,i)=>{
+                const ag=agents.find(a=>a.id===m.agentId);
+                const color=ag?.shirtColor||"#a78bfa";
+                return (
+                  <div key={i} style={{display:"flex",gap:8,alignItems:"flex-start"}}>
+                    <div style={{width:30,height:30,borderRadius:"50%",background:color,display:"flex",alignItems:"center",
+                      justifyContent:"center",fontWeight:"bold",fontSize:12,color:"#fff",flexShrink:0}}>
+                      {m.agentName.charAt(0)}
+                    </div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:9,color:color,fontWeight:"bold",marginBottom:2}}>{m.agentName} · {m.role}</div>
+                      <div style={{background:"#13102a",border:`1px solid ${color}33`,borderRadius:10,borderTopLeftRadius:2,
+                        padding:"8px 10px",fontSize:12,color:"#d4c8f0",lineHeight:1.55,wordBreak:"break-word"}}>{m.text}</div>
+                    </div>
+                  </div>
+                );
+              })}
+              <div ref={teamEndRef}/>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Bottom tab bar */}
+      <div style={{display:"flex",background:"#13102a",borderTop:"2px solid #2a1a4a",flexShrink:0}}>
+        <button style={TAB_STYLE(tab==="agents")} onClick={()=>setTab("agents")}>👤 Агенты</button>
+        <button style={TAB_STYLE(tab==="team")} onClick={()=>setTab("team")}>
+          💬 Команда{teamDiscussion.length>0?` (${teamDiscussion.length})`:""}
+        </button>
       </div>
     </div>
   );
@@ -782,7 +857,7 @@ export default function Home(){
   const totalMsgs=Object.values(chatHistories).reduce((s,h)=>s+h.length,0);
 
   if(isMobile){
-    return <MobileLayout agents={AGENTS} chatHistories={chatHistories} sending={sending} sendingIds={sendingIds} onSend={dispatchTask} setChatHistories={setChatHistories}/>;
+    return <MobileLayout agents={AGENTS} chatHistories={chatHistories} sending={sending} sendingIds={sendingIds} onSend={dispatchTask} setChatHistories={setChatHistories} githubToken={githubToken}/>;
   }
 
   return(
