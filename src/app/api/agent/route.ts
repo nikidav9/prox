@@ -200,7 +200,7 @@ const GITHUB_TOOLS: Tool[] = [{
 
 // Call another agent and get their response (depth-limited to prevent loops)
 async function consultAgent(targetId: string, question: string, githubToken: string, depth: number): Promise<string> {
-  if (depth >= 1) return "[нельзя цепочка консультаций больше 1 уровня]";
+  if (depth >= 2) return "[максимальная глубина цепочки достигнута]";
   const target = AGENTS.find(a => a.id === targetId);
   if (!target) return `[агент ${targetId} не найден]`;
   try {
