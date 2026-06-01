@@ -6,7 +6,7 @@ const TILE  = 16;
 const SCALE = 3;
 const RT    = TILE * SCALE;
 const COLS  = 20;
-const ROWS  = 11;
+const ROWS  = 13;
 const W     = COLS * RT;
 const H     = ROWS * RT;
 const WALK_SPD = 48;
@@ -27,23 +27,23 @@ const SEATS = [
   {tx:8, ty:3, dir:UP   as Dir},
   {tx:11,ty:3, dir:UP   as Dir},
   {tx:14,ty:3, dir:UP   as Dir},
-  // Middle row — face up, desk above at ty=4
-  {tx:2, ty:5, dir:UP   as Dir},
-  {tx:5, ty:5, dir:UP   as Dir},
-  {tx:8, ty:5, dir:UP   as Dir},
-  {tx:11,ty:5, dir:UP   as Dir},
-  {tx:14,ty:5, dir:UP   as Dir},
-  // Bottom row — face down, desk below at ty=8
-  {tx:2, ty:7, dir:DOWN as Dir},
-  {tx:5, ty:7, dir:DOWN as Dir},
-  {tx:8, ty:7, dir:DOWN as Dir},
-  {tx:11,ty:7, dir:DOWN as Dir},
-  {tx:14,ty:7, dir:DOWN as Dir},
+  // Middle row — face up, desk above at ty=5
+  {tx:2, ty:6, dir:UP   as Dir},
+  {tx:5, ty:6, dir:UP   as Dir},
+  {tx:8, ty:6, dir:UP   as Dir},
+  {tx:11,ty:6, dir:UP   as Dir},
+  {tx:14,ty:6, dir:UP   as Dir},
+  // Bottom row — face down, desk below at ty=10
+  {tx:2, ty:9, dir:DOWN as Dir},
+  {tx:5, ty:9, dir:DOWN as Dir},
+  {tx:8, ty:9, dir:DOWN as Dir},
+  {tx:11,ty:9, dir:DOWN as Dir},
+  {tx:14,ty:9, dir:DOWN as Dir},
 ];
 const DESK_OBS = [
   {tx:2,ty:2},{tx:5,ty:2},{tx:8,ty:2},{tx:11,ty:2},{tx:14,ty:2},
-  {tx:2,ty:4},{tx:5,ty:4},{tx:8,ty:4},{tx:11,ty:4},{tx:14,ty:4},
-  {tx:2,ty:8},{tx:5,ty:8},{tx:8,ty:8},{tx:11,ty:8},{tx:14,ty:8},
+  {tx:2,ty:5},{tx:5,ty:5},{tx:8,ty:5},{tx:11,ty:5},{tx:14,ty:5},
+  {tx:2,ty:10},{tx:5,ty:10},{tx:8,ty:10},{tx:11,ty:10},{tx:14,ty:10},
 ];
 
 const WALKABLE: boolean[][] = Array.from({length:ROWS}, (_,r) =>
@@ -210,19 +210,22 @@ function drawBoxes(ctx:CanvasRenderingContext2D,bx:number,by:number){
   ctx.fillStyle="#A88530";ctx.fillRect(bx-10,by-28,22,3);ctx.fillRect(bx,by-28,2,14);
 }
 function drawNameBadge(ctx:CanvasRenderingContext2D,ag:AgentRT,fc:number){
-  const seat=SEATS[ag.seatI],isTop=ag.seatI<10;
-  const bx=seat.tx*RT+RT/2,by=isTop?seat.ty*RT+RT+8:seat.ty*RT-18;
+  // Always draw badge ABOVE the character sprite so it's never hidden
+  const sx=Math.round(ag.ax*SCALE);
+  const sy=Math.round(ag.ay*SCALE);
+  const by=sy-CHAR_H*SCALE-16;
   const label=`${ag.def.name} · ${ag.def.role}`;
   ctx.font="bold 8px monospace";
   const tw=ctx.measureText(label).width;
-  rr(ctx,bx-tw/2-5,by,tw+10,12,2);
-  ctx.fillStyle="rgba(10,10,20,0.85)";ctx.fill();
-  ctx.strokeStyle=ag.def.shirtColor;ctx.lineWidth=1;ctx.stroke();
-  ctx.fillStyle=ag.def.shirtColor;ctx.fillText(label,bx-tw/2,by+9);
+  const bx=Math.max(4,Math.min(W-tw-14,sx-tw/2-5));
+  rr(ctx,bx,by,tw+10,14,2);
+  ctx.fillStyle="rgba(10,10,20,0.88)";ctx.fill();
+  ctx.strokeStyle=ag.def.shirtColor;ctx.lineWidth=1.5;ctx.stroke();
+  ctx.fillStyle=ag.def.shirtColor;ctx.fillText(label,bx+5,by+10);
   if(ag.busy){
-    ctx.fillStyle="#22c55e";ctx.beginPath();ctx.arc(bx+tw/2+7,by+6,3,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle="#22c55e";ctx.beginPath();ctx.arc(bx+tw+10,by+7,3,0,Math.PI*2);ctx.fill();
     ctx.globalAlpha=0.4+0.4*Math.sin(fc*0.15);ctx.strokeStyle="#22c55e";ctx.lineWidth=1.5;
-    ctx.beginPath();ctx.arc(bx+tw/2+7,by+6,5,0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1;
+    ctx.beginPath();ctx.arc(bx+tw+10,by+7,5,0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1;
   }
 }
 function drawScene(ctx:CanvasRenderingContext2D,agents:AgentRT[],sprites:(HTMLImageElement|null)[],fc:number){
@@ -230,10 +233,12 @@ function drawScene(ctx:CanvasRenderingContext2D,agents:AgentRT[],sprites:(HTMLIm
   for(let i=0;i<15;i++)drawDeskStation(ctx,SEATS[i],i<10,agents[i],fc);
   drawPlant(ctx,RT+RT/2,H-RT-2,fc,0);drawPlant(ctx,W-RT-RT/2,H-RT-2,fc,1);
   drawBoxes(ctx,RT+RT*2,RT*2+RT/2);drawPlant(ctx,W-RT-RT/2,RT*2+8,fc,2);
-  for(const ag of agents)drawNameBadge(ctx,ag,fc);
+  // Draw agents sorted by y (depth)
   const sorted=[...agents].sort((a,b)=>a.ay-b.ay);
   for(const ag of sorted)drawChar(ctx,sprites,ag,Math.round(ag.ax*SCALE),Math.round(ag.ay*SCALE),fc);
+  // Draw bubbles and badges LAST so they're always on top
   for(const ag of agents)if(ag.bubble)drawBubble(ctx,ag,ag.bubble,Math.round(ag.ax*SCALE),Math.round(ag.ay*SCALE));
+  for(const ag of agents)drawNameBadge(ctx,ag,fc);
 }
 function drawChar(ctx:CanvasRenderingContext2D,sprites:(HTMLImageElement|null)[],ag:AgentRT,sx:number,sy:number,fc:number){
   const sprite=sprites[ag.si];
@@ -299,7 +304,6 @@ function loadFromStorage<T>(key:string,fallback:T):T{
   try{const s=localStorage.getItem(key);return s?JSON.parse(s):fallback;}catch{return fallback;}
 }
 
-// IndexedDB helpers
 const IDB_DB = 'dev-office-v1';
 const IDB_STORE = 'tasks';
 
@@ -329,7 +333,7 @@ async function idbGetAll(): Promise<Record<string, unknown>[]> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(IDB_STORE, 'readonly');
     const req = tx.objectStore(IDB_STORE).getAll();
-    req.onsuccess = () => resolve((req.result as Record<string, unknown>[]));;
+    req.onsuccess = () => resolve(req.result as Record<string, unknown>[]);
     req.onerror = () => reject(req.error);
   });
 }
@@ -369,11 +373,9 @@ export default function Home(){
   const [teamTopic,setTeamTopic]=useState("");
   const [teamLoading,setTeamLoading]=useState(false);
 
-  // Service Worker registration
   useEffect(() => {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').then(() => {
-        // Listen for messages from SW
         navigator.serviceWorker.addEventListener('message', (event) => {
           if (event.data?.type === 'TASK_DONE') {
             const { agentId, result } = event.data;
@@ -389,7 +391,6 @@ export default function Home(){
     }
   }, []);
 
-  // Check IndexedDB for tasks completed by SW while tab was closed
   useEffect(() => {
     idbGetAll().then(tasks => {
       for (const task of tasks) {
@@ -412,17 +413,14 @@ export default function Home(){
     }).catch(() => {});
   }, []);
 
-  // Persist chat histories
   useEffect(()=>{
     try{localStorage.setItem("dev_office_history",JSON.stringify(chatHistories));}catch{}
   },[chatHistories]);
 
-  // Persist github token
   useEffect(()=>{
     try{localStorage.setItem("dev_office_github",githubToken);}catch{}
   },[githubToken]);
 
-  // Load sprites
   useEffect(()=>{
     spritesRef.current=SPRITE_URLS.map(()=>null);
     SPRITE_URLS.forEach((url,i)=>{
@@ -433,7 +431,6 @@ export default function Home(){
     });
   },[]);
 
-  // Init agents
   useEffect(()=>{
     agentsRef.current=AGENTS.map((def,i)=>{
       const seat=SEATS[i];
@@ -443,7 +440,6 @@ export default function Home(){
     });
   },[]);
 
-  // Game loop
   useEffect(()=>{
     const canvas=canvasRef.current;if(!canvas)return;
     const rawCtx=canvas.getContext("2d");if(!rawCtx)return;
@@ -502,7 +498,6 @@ export default function Home(){
       .filter(m=>m.role==="user"||m.role==="model")
       .map(m=>({role:m.role as "user"|"model",text:m.text}));
     await idbPut({ id: taskId, agentId, message: msg, history: apiHistory, githubToken, status: 'pending', createdAt: Date.now() });
-    // Register background sync
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.ready.then(reg => {
         if ('sync' in reg) {
@@ -574,7 +569,6 @@ export default function Home(){
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[githubToken,selectedId]);
 
-  // Auto-resume unanswered tasks on mount
   useEffect(()=>{
     if(resumedRef.current)return;
     resumedRef.current=true;
@@ -638,7 +632,6 @@ export default function Home(){
 
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100vh",background:"#12120f",fontFamily:"'Courier New',monospace",color:"#e2e8f0",overflow:"hidden"}}>
-      {/* Nav */}
       <div style={{display:"flex",alignItems:"center",gap:8,padding:"5px 12px",background:"#1a1a0e",borderBottom:"2px solid #3a3010",flexShrink:0}}>
         <span style={{fontSize:13,fontWeight:"bold",letterSpacing:1,color:"#D4A843"}}>Dev Office</span>
         <div style={{display:"flex",gap:4,marginLeft:6,flexWrap:"wrap"}}>
@@ -668,7 +661,6 @@ export default function Home(){
         </div>
       </div>
 
-      {/* Settings panel */}
       {showSettings&&(
         <div style={{background:"#1a1505",borderBottom:"2px solid #3a3010",padding:"10px 14px",display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
           <span style={{fontSize:11,color:"#D4A843",minWidth:100}}>GitHub Token:</span>
@@ -696,7 +688,6 @@ export default function Home(){
               border:"3px solid #3a3010",boxShadow:"0 0 20px rgba(0,0,0,0.5)"}}/>
         </div>
 
-        {/* Team Chat Panel */}
         {showTeamChat&&(
           <div style={{width:340,display:"flex",flexDirection:"column",background:"#120a1e",
             borderLeft:"3px solid #5a3a8a",flexShrink:0}}>
