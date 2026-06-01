@@ -10,16 +10,20 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
 
 // ── Model pool ────────────────────────────────────────────────────────────────
-// Each model tried in order; on 429/quota/tool-error it's cooled down and skipped
 type Provider = "gemini" | "groq";
 interface ModelEntry { id: string; provider: Provider; model: string }
 
 const MODEL_POOL: ModelEntry[] = [
-  { id: "gemini-2.0-flash",   provider: "gemini", model: "gemini-2.0-flash" },
-  { id: "gemini-1.5-flash",   provider: "gemini", model: "gemini-1.5-flash" },
-  { id: "groq-70b",           provider: "groq",   model: "llama-3.3-70b-versatile" },
-  { id: "groq-8b",            provider: "groq",   model: "llama-3.1-8b-instant" },
-  { id: "groq-gemma",         provider: "groq",   model: "gemma2-9b-it" },
+  { id: "gemini-2.0-flash",        provider: "gemini", model: "gemini-2.0-flash" },
+  { id: "gemini-1.5-flash",        provider: "gemini", model: "gemini-1.5-flash" },
+  { id: "gemini-1.5-flash-8b",     provider: "gemini", model: "gemini-1.5-flash-8b" },
+  { id: "groq-llama33-70b",        provider: "groq",   model: "llama-3.3-70b-versatile" },
+  { id: "groq-llama31-8b",         provider: "groq",   model: "llama-3.1-8b-instant" },
+  { id: "groq-gemma2-9b",          provider: "groq",   model: "gemma2-9b-it" },
+  { id: "groq-deepseek-70b",       provider: "groq",   model: "deepseek-r1-distill-llama-70b" },
+  { id: "groq-qwen-32b",           provider: "groq",   model: "qwen-qwq-32b" },
+  { id: "groq-llama3-70b",         provider: "groq",   model: "llama3-70b-8192" },
+  { id: "groq-llama31-70b",        provider: "groq",   model: "llama-3.1-70b-versatile" },
 ];
 
 // In-memory cooldown: modelId → timestamp when it's available again
@@ -41,11 +45,14 @@ function markCooled(id: string, msg: string) {
   cooldowns.set(id, Date.now() + Math.min(waitMs + 5000, 24 * 3600_000));
 }
 
-function isRateError(msg: string) {
-  return msg.includes("429") || msg.includes("quota") || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("rate_limit");
-}
-function isToolError(msg: string) {
-  return msg.includes("400") || msg.includes("tool_use_failed") || msg.includes("Failed to call");
+function isSkippableError(msg: string) {
+  return (
+    msg.includes("429") || msg.includes("quota") || msg.includes("RESOURCE_EXHAUSTED") ||
+    msg.includes("rate_limit") || msg.includes("rate limit") || msg.includes("tokens per day") ||
+    msg.includes("400") || msg.includes("tool_use_failed") || msg.includes("Failed to call") ||
+    msg.includes("503") || msg.includes("502") || msg.includes("overloaded") ||
+    msg.includes("unavailable") || msg.includes("capacity")
+  );
 }
 
 // ── Context compression ───────────────────────────────────────────────────────
@@ -203,25 +210,22 @@ export async function POST(req: NextRequest) {
     let lastError = "";
     let usedProvider = "gemini";
 
-    // Try each available model in pool order
+    // Try each model in pool order — any error → cool it down, try next
     const pool = availableModels();
-    if (pool.length === 0) {
-      return NextResponse.json({ error: "Все модели временно недоступны (лимиты). Подождите немного и попробуйте снова." }, { status: 429 });
-    }
 
     for (const entry of pool) {
       try {
         if (entry.provider === "gemini") {
-          const model = genAI.getGenerativeModel({
+          const gModel = genAI.getGenerativeModel({
             model: entry.model,
             systemInstruction,
             tools: hasGithub ? GITHUB_TOOLS : [],
           });
-          const chat = model.startChat({
+          const chat = gModel.startChat({
             history: trimmedHistory.map(msg => ({ role: msg.role, parts: [{ text: msg.text }] })),
           });
 
-          async function geminiSend(payload: Parameters<typeof chat.sendMessage>[0]) {
+          const geminiSend = async (payload: Parameters<typeof chat.sendMessage>[0]) => {
             for (let attempt = 0; attempt < 2; attempt++) {
               try {
                 return await chat.sendMessage(payload, { generationConfig: { maxOutputTokens: 800 } } as never);
@@ -229,21 +233,23 @@ export async function POST(req: NextRequest) {
                 const m = String(err);
                 const match = m.match(/retry in ([\d.]+)s/i);
                 const waitMs = match ? Math.ceil(parseFloat(match[1]) * 1000) : 0;
-                if (attempt < 1 && waitMs > 0 && waitMs <= 20_000) await new Promise(r => setTimeout(r, waitMs));
+                if (attempt < 1 && waitMs > 0 && waitMs <= 15_000) await new Promise(r => setTimeout(r, waitMs));
                 else throw err;
               }
             }
             throw new Error("Max retries");
-          }
+          };
 
           let result = await geminiSend(message);
           for (let i = 0; i < 8; i++) {
             const parts = result.response.candidates?.[0]?.content?.parts ?? [];
-            const calls = parts.filter(p => p.functionCall);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const calls = parts.filter((p: any) => p.functionCall);
             if (calls.length === 0) break;
-            const responses = await Promise.all(calls.map(async part => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const responses = await Promise.all(calls.map(async (part: any) => {
               const fc = part.functionCall!;
-              const toolResult = await runGithubTool(fc.name, fc.args as Record<string, unknown>, githubToken);
+              const toolResult = await runGithubTool(fc.name, fc.args as Record<string,unknown>, githubToken);
               githubActions.push(`${fc.name}: ${JSON.stringify(toolResult).slice(0, 150)}`);
               return { functionResponse: { name: fc.name, response: toolResult } };
             }));
@@ -297,16 +303,19 @@ export async function POST(req: NextRequest) {
       } catch (err) {
         const errMsg = String(err);
         lastError = errMsg;
-        if (isRateError(errMsg) || isToolError(errMsg)) {
-          markCooled(entry.id, errMsg);
-          continue; // try next model
-        }
-        throw err; // unexpected error — bubble up
+        // Always cool down and try next — don't give up on a single model failure
+        markCooled(entry.id, errMsg);
+        console.log(`[rotation] ${entry.id} failed (${errMsg.slice(0, 80)}), trying next...`);
+        continue;
       }
     }
 
     if (!text) {
-      return NextResponse.json({ error: lastError || "Все модели исчерпаны" }, { status: 429 });
+      const allExhausted = availableModels().length === 0;
+      const msg = allExhausted
+        ? "Все модели на перерыве (лимиты), автоматически попробуем снова через несколько минут."
+        : `Не удалось получить ответ. Последняя ошибка: ${lastError.slice(0, 200)}`;
+      return NextResponse.json({ error: msg }, { status: 429 });
     }
 
     const botMsg: ChatMsg = { role: "model", text, ...(githubActions.length ? { githubActions } : {}) };
