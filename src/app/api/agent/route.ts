@@ -276,7 +276,7 @@ export async function POST(req: NextRequest) {
     const model = genAI.getGenerativeModel({
       model: "gemini-2.0-flash",
       systemInstruction,
-      tools: hasGithub ? [...GITHUB_TOOLS, CONSULT_TOOL] : [CONSULT_TOOL],
+      tools: hasGithub ? GITHUB_TOOLS : [],
     });
 
     // Load stored history and compress if long
@@ -329,15 +329,8 @@ export async function POST(req: NextRequest) {
           calls.map(async (part) => {
             const fc = part.functionCall!;
             let toolResult: object;
-            if (fc.name === "consult_agent") {
-              const args = fc.args as Record<string, unknown>;
-              const reply = await consultAgent(String(args.agentId), String(args.question), githubToken, _depth);
-              toolResult = { reply };
-              githubActions.push(`👥 ${args.agentId}: ${reply.slice(0, 120)}`);
-            } else {
-              toolResult = await runGithubTool(fc.name, fc.args as Record<string, unknown>, githubToken);
-              githubActions.push(`${fc.name}: ${JSON.stringify(toolResult).slice(0, 150)}`);
-            }
+            toolResult = await runGithubTool(fc.name, fc.args as Record<string, unknown>, githubToken);
+            githubActions.push(`${fc.name}: ${JSON.stringify(toolResult).slice(0, 150)}`);
             return { functionResponse: { name: fc.name, response: toolResult } };
           })
         );
