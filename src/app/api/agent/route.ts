@@ -183,7 +183,7 @@ const GITHUB_TOOLS: Tool[] = [{
 
 export async function POST(req: NextRequest) {
   try {
-    const { message, agentId, history, githubToken } = await req.json();
+    const { message, agentId, history, githubToken: clientToken } = await req.json();
     if (!message || !agentId)
       return NextResponse.json({ error: "message and agentId required" }, { status: 400 });
 
@@ -191,7 +191,8 @@ export async function POST(req: NextRequest) {
     if (!agent)
       return NextResponse.json({ error: "Unknown agent" }, { status: 400 });
 
-    const hasGithub = !!(githubToken?.trim());
+    const githubToken = clientToken?.trim() || process.env.GITHUB_TOKEN || "";
+    const hasGithub = !!githubToken;
     const systemInstruction = agent.soul +
       (hasGithub
         ? "\n\nУ тебя есть доступ к GitHub через инструменты. Используй их для реальной работы: создавай репозитории, файлы, ветки, задачи. Когда тебя просят что-то сделать в GitHub — делай сразу через инструменты, не просто объясняй. Сначала всегда вызывай github_get_user чтобы знать логин пользователя."
