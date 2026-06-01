@@ -239,11 +239,10 @@ const GITHUB_TOOLS: Tool[] = [{
 async function consultAgent(targetId: string, question: string, githubToken: string, depth: number): Promise<string> {
   if (depth >= 2) return "[максимальная глубина цепочки достигнута]";
   const target = AGENTS.find(a => a.id === targetId);
-  if (!target) return `[агент ${targetId} не найден]`;
+  if (!target) return `[агент не найден: ${targetId}. Доступные id: ${AGENTS.map(a=>a.id).join(", ")}]`;
   try {
-    const baseUrl = process.env.VERCEL_URL
-      ? `https://${process.env.VERCEL_URL}`
-      : "http://localhost:3000";
+    // On Vercel use the stable production URL, not VERCEL_URL (which changes per deployment)
+    const baseUrl = process.env.APP_URL || "https://prox-two-zeta.vercel.app";
     const res = await fetch(`${baseUrl}/api/agent`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -251,8 +250,8 @@ async function consultAgent(targetId: string, question: string, githubToken: str
     });
     const data = await res.json();
     return data.text || "[нет ответа]";
-  } catch {
-    return "[ошибка консультации]";
+  } catch (e) {
+    return `[ошибка консультации: ${String(e).slice(0, 100)}]`;
   }
 }
 
