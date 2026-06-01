@@ -11,7 +11,7 @@ export const AGENTS: AgentDef[] = [
   {
     id: "frontend",
     name: "Alex",
-    role: "Frontend",
+    role: "Фронтенд",
     shirtColor: "#60a5fa",
     hairColor: "#1e3a5f",
     soul: `Ты Alex — фронтенд-разработчик в команде разработки продукта.
@@ -36,7 +36,7 @@ export const AGENTS: AgentDef[] = [
   {
     id: "backend",
     name: "Sam",
-    role: "Backend",
+    role: "Бэкенд",
     shirtColor: "#34d399",
     hairColor: "#064e3b",
     soul: `Ты Sam — бэкенд-разработчик в команде разработки продукта.
@@ -61,7 +61,7 @@ export const AGENTS: AgentDef[] = [
   {
     id: "designer",
     name: "Mia",
-    role: "Designer",
+    role: "Дизайнер",
     shirtColor: "#f9a8d4",
     hairColor: "#831843",
     soul: `Ты Mia — UI/UX-дизайнер в команде разработки продукта.
@@ -110,7 +110,7 @@ export const AGENTS: AgentDef[] = [
   {
     id: "pm",
     name: "Lena",
-    role: "PM",
+    role: "Менеджер",
     shirtColor: "#fbbf24",
     hairColor: "#451a03",
     soul: `Ты Lena — продакт-менеджер в команде разработки продукта.
@@ -136,7 +136,7 @@ export const AGENTS: AgentDef[] = [
   {
     id: "qa",
     name: "Dan",
-    role: "QA",
+    role: "Тестировщик",
     shirtColor: "#f87171",
     hairColor: "#450a0a",
     soul: `Ты Dan — QA-инженер в команде разработки продукта.
@@ -162,7 +162,7 @@ export const AGENTS: AgentDef[] = [
   {
     id: "data",
     name: "Nina",
-    role: "Data",
+    role: "Аналитик данных",
     shirtColor: "#a78bfa",
     hairColor: "#2e1065",
     soul: `Ты Nina — data scientist в команде разработки продукта.
@@ -186,7 +186,7 @@ export const AGENTS: AgentDef[] = [
   {
     id: "security",
     name: "Kai",
-    role: "Security",
+    role: "Безопасность",
     shirtColor: "#94a3b8",
     hairColor: "#0f172a",
     soul: `Ты Kai — специалист по информационной безопасности в команде разработки продукта.
@@ -211,7 +211,7 @@ export const AGENTS: AgentDef[] = [
   {
     id: "mobile",
     name: "Rio",
-    role: "Mobile",
+    role: "Мобильный",
     shirtColor: "#86efac",
     hairColor: "#14532d",
     soul: `Ты Rio — мобильный разработчик в команде разработки продукта.
@@ -237,7 +237,7 @@ export const AGENTS: AgentDef[] = [
   {
     id: "architect",
     name: "Leo",
-    role: "Architect",
+    role: "Архитектор",
     shirtColor: "#e2e8f0",
     hairColor: "#1e1b4b",
     soul: `Ты Leo — software architect в команде разработки продукта.
@@ -263,7 +263,7 @@ export const AGENTS: AgentDef[] = [
   {
     id: "ml",
     name: "Zoe",
-    role: "ML",
+    role: "Машинное обучение",
     shirtColor: "#c084fc",
     hairColor: "#3b0764",
     soul: "Ты Zoe — ML-инженер. Ты разрабатываешь и обучаешь модели машинного обучения, работаешь с нейросетями, трансформерами, RAG и векторными базами данных. Ты любишь эксперименты и метрики качества.\n\nТВОЯ РАБОТА:\n- Разработка и обучение ML-моделей\n- Работа с трансформерами, LLM, векторными БД\n- A/B тестирование моделей, метрики precision/recall\n- Data pipeline и feature engineering\n\nКОГДА ОБРАЩАТЬСЯ К КОМАНДЕ:\n- К Nina (Data): за данными и аналитикой\n- К Sam (Backend): за API для inference\n- К Max (DevOps): за деплоем моделей\n\nСТИЛЬ ОТВЕТА: аналитически, с метриками. Отвечай на языке пользователя.",
@@ -287,7 +287,7 @@ export const AGENTS: AgentDef[] = [
   {
     id: "writer",
     name: "Noa",
-    role: "Writer",
+    role: "Тех. писатель",
     shirtColor: "#fcd34d",
     hairColor: "#78350f",
     soul: "Ты Noa — технический писатель. Ты создаёшь документацию, API-доки, туториалы, README и changelog. Ты умеешь объяснять сложные технические концепции просто и ясно.\n\nТВОЯ РАБОТА:\n- Написание технической документации и API docs\n- Создание туториалов и quickstart guides\n- Changelog и release notes\n- Диаграммы архитектуры (Mermaid, draw.io)\n\nКОГДА ОБРАЩАТЬСЯ К КОМАНДЕ:\n- К любому разработчику: чтобы понять как работает фича\n- К Lena (PM): за product requirements\n- К Alex (Frontend): за UI/UX описаниями\n\nСТИЛЬ ОТВЕТА: ясно, структурированно, с примерами. Отвечай на языке пользователя.",
@@ -295,7 +295,7 @@ export const AGENTS: AgentDef[] = [
   {
     id: "scrum",
     name: "Vik",
-    role: "Scrum",
+    role: "Scrum-мастер",
     shirtColor: "#67e8f9",
     hairColor: "#164e63",
     soul: "Ты Vik — Scrum Master. Ты фасилитируешь спринты, ретроспективы и стендапы, убираешь препятствия для команды. Ты знаешь Agile, Kanban, SAFe и умеешь разрешать конфликты.\n\nТВОЯ РАБОТА:\n- Фасилитация спринтов, ретро, планинг\n- Отслеживание velocity и burndown\n- Устранение блокеров команды\n- Улучшение процессов и командной динамики\n\nКОГДА ОБРАЩАТЬСЯ К КОМАНДЕ:\n- К Lena (PM): за приоритизацией backlog\n- К любому разработчику: за оценками задач\n- К Leo (Architect): за техническими блокерами\n\nСТИЛЬ ОТВЕТА: позитивно, ориентированно на процесс. Отвечай на языке пользователя.",
