@@ -1,6 +1,9 @@
 import { GoogleGenerativeAI, Tool, SchemaType } from "@google/generative-ai";
 import { NextRequest, NextResponse } from "next/server";
 import { AGENTS } from "@/lib/agents";
+import { loadHistory, saveHistory, ChatMsg } from "@/lib/redis";
+
+export const maxDuration = 60;
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
@@ -228,6 +231,13 @@ export async function POST(req: NextRequest) {
     }
 
     const text = result.response.text();
+
+    // Persist to Redis so history survives browser close
+    const stored: ChatMsg[] = await loadHistory(agentId);
+    const userMsg: ChatMsg = { role: "user", text: message };
+    const botMsg: ChatMsg = { role: "model", text, ...(githubActions.length ? { githubActions } : {}) };
+    await saveHistory(agentId, [...stored, userMsg, botMsg]);
+
     return NextResponse.json({ text, agentName: agent.name, githubActions: githubActions.length ? githubActions : undefined });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
