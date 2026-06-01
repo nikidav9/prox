@@ -243,8 +243,11 @@ export async function POST(req: NextRequest) {
       ...({ tools: [...GITHUB_TOOLS, CONSULT_TOOL] }),
     });
 
+    // Keep last 8 messages to save quota (trim old context)
+    const trimmedHistory = (history || []).slice(-8);
+
     const chat = model.startChat({
-      history: (history || []).map((msg: { role: string; text: string }) => ({
+      history: trimmedHistory.map((msg: { role: string; text: string }) => ({
         role: msg.role,
         parts: [{ text: msg.text }],
       })),
@@ -254,7 +257,7 @@ export async function POST(req: NextRequest) {
     async function sendWithRetry(payload: Parameters<typeof chat.sendMessage>[0]) {
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          return await chat.sendMessage(payload);
+          return await chat.sendMessage(payload, { generationConfig: { maxOutputTokens: 800 } } as never);
         } catch (err) {
           const msg = String(err);
           const match = msg.match(/retry in ([\d.]+)s/i);
@@ -305,7 +308,7 @@ export async function POST(req: NextRequest) {
 
       if (isQuota && groq) {
         usedGroq = true;
-        const groqHistory = (history || []).map((m: { role: string; text: string }) => ({
+        const groqHistory = (history || []).slice(-8).map((m: { role: string; text: string }) => ({
           role: (m.role === "model" ? "assistant" : "user") as "user" | "assistant",
           content: m.text,
         }));
