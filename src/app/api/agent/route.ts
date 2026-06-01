@@ -9,6 +9,43 @@ export const maxDuration = 60;
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
 
+const KEEP_RECENT = 4;   // messages kept verbatim after compression
+const COMPRESS_AT = 12;  // compress when history exceeds this
+
+// Summarize old messages via Groq (cheap, fast) — like Claude Code's compaction
+async function compressHistory(messages: ChatMsg[]): Promise<ChatMsg[]> {
+  if (!groq || messages.length <= COMPRESS_AT) return messages;
+
+  const toSummarize = messages.slice(0, -KEEP_RECENT);
+  const recent = messages.slice(-KEEP_RECENT);
+
+  // If there's already a summary at the top, include it in what we're summarizing
+  const summaryPrefix = toSummarize[0]?.role === "system" && toSummarize[0].text.startsWith("📋")
+    ? toSummarize[0].text + "\n\n"
+    : "";
+
+  const dialog = toSummarize
+    .filter(m => m.role !== "system")
+    .map(m => `${m.role === "user" ? "Пользователь" : "Агент"}: ${m.text.slice(0, 400)}`)
+    .join("\n");
+
+  try {
+    const res = await groq.chat.completions.create({
+      model: "llama-3.3-70b-versatile",
+      messages: [{
+        role: "user",
+        content: `${summaryPrefix}Сделай краткое техническое резюме этого диалога (3-7 пунктов, только факты и решения, без воды):\n\n${dialog}`,
+      }],
+      max_tokens: 300,
+    });
+    const summary = res.choices[0]?.message?.content || "";
+    return [{ role: "system", text: `📋 Резюме предыдущего диалога:\n${summary}` }, ...recent];
+  } catch {
+    // If compression fails, just trim
+    return messages.slice(-COMPRESS_AT);
+  }
+}
+
 async function githubFetch(token: string, path: string, method = "GET", body?: object) {
   const res = await fetch(`https://api.github.com${path}`, {
     method,
@@ -243,8 +280,15 @@ export async function POST(req: NextRequest) {
       ...({ tools: [...GITHUB_TOOLS, CONSULT_TOOL] }),
     });
 
-    // Keep last 8 messages to save quota (trim old context)
-    const trimmedHistory = (history || []).slice(-8);
+    // Load stored history and compress if long
+    const stored: ChatMsg[] = await loadHistory(agentId);
+    const fullHistory: ChatMsg[] = stored.length > 0 ? stored : (history || []);
+    const compressedHistory = await compressHistory(fullHistory);
+    // If compression happened, save it back so next call starts compressed
+    if (compressedHistory.length < fullHistory.length) {
+      await saveHistory(agentId, compressedHistory);
+    }
+    const trimmedHistory = compressedHistory.filter(m => m.role === "user" || m.role === "model");
 
     const chat = model.startChat({
       history: trimmedHistory.map((msg: { role: string; text: string }) => ({
@@ -308,10 +352,12 @@ export async function POST(req: NextRequest) {
 
       if (isQuota && groq) {
         usedGroq = true;
-        const groqHistory = (history || []).slice(-8).map((m: { role: string; text: string }) => ({
-          role: (m.role === "model" ? "assistant" : "user") as "user" | "assistant",
-          content: m.text,
-        }));
+        const groqHistory = compressedHistory
+          .filter(m => m.role === "user" || m.role === "model")
+          .map((m) => ({
+            role: (m.role === "model" ? "assistant" : "user") as "user" | "assistant",
+            content: m.text,
+          }));
 
         // Tools for Groq (GitHub + consult_agent)
         const groqTools = [
@@ -375,11 +421,10 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Persist to Supabase
-    const stored: ChatMsg[] = await loadHistory(agentId);
+    // Persist to Supabase (append to already-compressed history)
     const userMsg: ChatMsg = { role: "user", text: message };
     const botMsg: ChatMsg = { role: "model", text, ...(githubActions.length ? { githubActions } : {}) };
-    await saveHistory(agentId, [...stored, userMsg, botMsg]);
+    await saveHistory(agentId, [...compressedHistory, userMsg, botMsg]);
 
     return NextResponse.json({
       text,
