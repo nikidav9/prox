@@ -2,13 +2,14 @@
 import { useEffect, useRef, useState } from "react";
 import { AGENTS, AgentDef } from "@/lib/agents";
 
+// ── Constants ─────────────────────────────────────────────────────────────────
 const TILE  = 16;
 const SCALE = 3;
-const RT    = TILE * SCALE;
+const RT    = TILE * SCALE; // 48px per tile on screen
 const COLS  = 20;
 const ROWS  = 11;
-const W     = COLS * RT;
-const H     = ROWS * RT;
+const W     = COLS * RT;   // 960
+const H     = ROWS * RT;   // 528
 const WALK_SPD = 48;
 
 type Dir    = 0 | 1 | 2 | 3;
@@ -20,9 +21,18 @@ const SPRITE_URLS = [0,1,2,3,4,5].map(
   i => `https://raw.githubusercontent.com/pablodelucca/pixel-agents/main/webview-ui/public/assets/characters/char_${i}.png`
 );
 
+// ── Office layout ─────────────────────────────────────────────────────────────
 const SEATS = [
-  {tx:2, ty:3, dir:UP   as Dir},{tx:5, ty:3, dir:UP   as Dir},{tx:8, ty:3, dir:UP   as Dir},{tx:11,ty:3, dir:UP   as Dir},{tx:14,ty:3, dir:UP   as Dir},
-  {tx:2, ty:7, dir:DOWN as Dir},{tx:5, ty:7, dir:DOWN as Dir},{tx:8, ty:7, dir:DOWN as Dir},{tx:11,ty:7, dir:DOWN as Dir},{tx:14,ty:7, dir:DOWN as Dir},
+  {tx:2, ty:3, dir:UP   as Dir},
+  {tx:5, ty:3, dir:UP   as Dir},
+  {tx:8, ty:3, dir:UP   as Dir},
+  {tx:11,ty:3, dir:UP   as Dir},
+  {tx:14,ty:3, dir:UP   as Dir},
+  {tx:2, ty:7, dir:DOWN as Dir},
+  {tx:5, ty:7, dir:DOWN as Dir},
+  {tx:8, ty:7, dir:DOWN as Dir},
+  {tx:11,ty:7, dir:DOWN as Dir},
+  {tx:14,ty:7, dir:DOWN as Dir},
 ];
 const DESK_OBS = [
   {tx:2,ty:2},{tx:5,ty:2},{tx:8,ty:2},{tx:11,ty:2},{tx:14,ty:2},
@@ -79,14 +89,31 @@ interface AgentRT {
   busy: boolean;
 }
 
+// ── Palette ───────────────────────────────────────────────────────────────────
 const P = {
-  floorA:"#C8A96E", floorB:"#B89252",
-  wallDark:"#1E1E3A", wallMid:"#252545",
-  wood1:"#A0692A", wood2:"#7A4E1A", wood3:"#6B3E12", woodFloor:"#8B5E2A",
-  monBody:"#787878", monScr:"#1a2040",
-  chair:"#C8A87A", chairDk:"#A07850",
-  book1:"#C0392B", book2:"#27AE60", book3:"#2980B9", book4:"#F39C12", book5:"#8E44AD",
-  plant:"#27AE60", plantDk:"#1E8449", pot:"#A04010", potDk:"#7A3010",
+  floorA:   "#C8A96E",
+  floorB:   "#B89252",
+  wallDark: "#1E1E3A",
+  wallMid:  "#252545",
+  wood1:    "#A0692A",
+  wood2:    "#7A4E1A",
+  wood3:    "#6B3E12",
+  woodFloor:"#8B5E2A",
+  monBody:  "#787878",
+  monScr:   "#1a2040",
+  monScrOn: "#0d1f3c",
+  chair:    "#C8A87A",
+  chairDk:  "#A07850",
+  book1:    "#C0392B",
+  book2:    "#27AE60",
+  book3:    "#2980B9",
+  book4:    "#F39C12",
+  book5:    "#8E44AD",
+  plant:    "#27AE60",
+  plantDk:  "#1E8449",
+  pot:      "#A04010",
+  potDk:    "#7A3010",
+  wallDeco: "#2D2D5A",
 };
 
 function rr(ctx:CanvasRenderingContext2D,x:number,y:number,w:number,h:number,r:number){
@@ -103,37 +130,53 @@ function drawFloor(ctx:CanvasRenderingContext2D){
     for(let c=1;c<COLS-1;c++){
       ctx.fillStyle=(c+r)%2===0?P.floorA:P.floorB;
       ctx.fillRect(c*RT,r*RT,RT,RT);
-      ctx.strokeStyle="rgba(0,0,0,0.12)";ctx.lineWidth=1;
+      ctx.strokeStyle="rgba(0,0,0,0.12)";
+      ctx.lineWidth=1;
       ctx.strokeRect(c*RT+0.5,r*RT+0.5,RT-1,RT-1);
     }
   }
 }
 
 function drawWalls(ctx:CanvasRenderingContext2D){
-  ctx.fillStyle=P.wallDark;ctx.fillRect(0,0,W,RT);
+  ctx.fillStyle=P.wallDark;
+  ctx.fillRect(0,0,W,RT);
   ctx.fillStyle=P.wallMid;
-  ctx.fillRect(0,0,RT,H);ctx.fillRect(W-RT,0,RT,H);ctx.fillRect(0,H-RT,W,RT);
+  ctx.fillRect(0,0,RT,H);
+  ctx.fillRect(W-RT,0,RT,H);
+  ctx.fillStyle=P.wallMid;
+  ctx.fillRect(0,H-RT,W,RT);
   ctx.fillStyle=P.wood3;
-  ctx.fillRect(RT,H-RT,W-RT*2,4);ctx.fillRect(RT,RT-2,W-RT*2,4);
+  ctx.fillRect(RT,H-RT,W-RT*2,4);
+  ctx.fillRect(RT,RT-2,W-RT*2,4);
 }
 
 function drawBookshelves(ctx:CanvasRenderingContext2D){
-  const shelfDefs=[{sx:1*RT,sw:5*RT},{sx:8*RT,sw:5*RT},{sx:15*RT,sw:4*RT}];
+  const shelfDefs = [
+    {sx:1*RT, sw:5*RT},
+    {sx:8*RT, sw:5*RT},
+    {sx:15*RT,sw:4*RT},
+  ];
   for(const {sx,sw} of shelfDefs){
-    const sy=4,sh=RT-6;
-    ctx.fillStyle=P.wood3;ctx.fillRect(sx,sy,sw,sh);
+    const sy=4, sh=RT-6;
+    ctx.fillStyle=P.wood3;
+    ctx.fillRect(sx,sy,sw,sh);
     ctx.fillStyle=P.woodFloor;
-    ctx.fillRect(sx,sy,sw,4);ctx.fillRect(sx,sy+sh-4,sw,4);
-    ctx.fillRect(sx,sy,4,sh);ctx.fillRect(sx+sw-4,sy,4,sh);
+    ctx.fillRect(sx,sy,sw,4);
+    ctx.fillRect(sx,sy+sh-4,sw,4);
+    ctx.fillRect(sx,sy,4,sh);
+    ctx.fillRect(sx+sw-4,sy,4,sh);
     ctx.fillRect(sx,sy+sh/2-2,sw,3);
     const bookColors=[P.book1,P.book2,P.book3,P.book4,P.book5,"#D4D4D4","#E67E22",P.book1,P.book3,P.book2];
-    let bx=sx+6,row=0;
+    let bx=sx+6;
+    let row=0;
     while(bx<sx+sw-6){
       const bw=5+Math.floor(Math.abs(Math.sin(bx*0.3))*4);
-      const bh=sh/2-7,bsy=sy+5+row*(sh/2+1);
+      const bh=sh/2-7;
+      const bsy=sy+5+row*(sh/2+1);
       ctx.fillStyle=bookColors[(bx+row*3)%bookColors.length];
       ctx.fillRect(bx,bsy,bw,bh);
-      ctx.fillStyle="rgba(0,0,0,0.2)";ctx.fillRect(bx,bsy,1,bh);
+      ctx.fillStyle="rgba(0,0,0,0.2)";
+      ctx.fillRect(bx,bsy,1,bh);
       bx+=bw+1;
       if(bx>=sx+sw-6&&row===0){bx=sx+6;row=1;}
       if(row>1)break;
@@ -143,55 +186,87 @@ function drawBookshelves(ctx:CanvasRenderingContext2D){
 
 function drawDeskStation(
   ctx:CanvasRenderingContext2D,
-  seatTile:{tx:number,ty:number,dir:Dir},
-  isTop:boolean,
-  agent:AgentRT|undefined,
-  fc:number
+  seatTile: {tx:number,ty:number,dir:Dir},
+  isTop: boolean,
+  agent: AgentRT|undefined,
+  fc: number
 ){
-  const deskTy=isTop?seatTile.ty-1:seatTile.ty+1;
-  const dsx=seatTile.tx*RT-RT,dsy=deskTy*RT;
+  const deskTy = isTop ? seatTile.ty-1 : seatTile.ty+1;
+  const dsx = seatTile.tx*RT - RT;
+  const dsy = deskTy*RT;
+
   ctx.fillStyle="rgba(0,0,0,0.25)";
   ctx.fillRect(dsx+3,dsy+RT+2,RT*3,6);
-  ctx.fillStyle=P.wood1;ctx.fillRect(dsx,dsy,RT*3,RT);
+  ctx.fillStyle=P.wood1;
+  ctx.fillRect(dsx,dsy,RT*3,RT);
   ctx.fillStyle=P.wood2;
-  for(let g=0;g<3;g++)ctx.fillRect(dsx+g*RT+RT*0.3,dsy+4,2,RT-8);
+  for(let g=0;g<3;g++){
+    ctx.fillRect(dsx+g*RT+RT*0.3,dsy+4,2,RT-8);
+  }
+  ctx.fillStyle=P.wood2;
   ctx.fillRect(dsx,dsy+RT-6,RT*3,6);
   ctx.fillStyle=P.wood3;
-  ctx.fillRect(dsx+4,dsy+RT,8,14);ctx.fillRect(dsx+RT*3-12,dsy+RT,8,14);
-  const mx=seatTile.tx*RT,my=dsy+3,mw=RT-2,mh=RT-10;
+  ctx.fillRect(dsx+4,dsy+RT,8,14);
+  ctx.fillRect(dsx+RT*3-12,dsy+RT,8,14);
+
+  const mx = seatTile.tx*RT;
+  const my = dsy+3;
+  const mw = RT-2, mh = RT-10;
   ctx.fillStyle=P.monBody;
-  ctx.fillRect(mx+mw/2-8,my+mh,16,5);ctx.fillRect(mx+mw/2-12,my+mh+4,24,4);
+  ctx.fillRect(mx+mw/2-8,my+mh,16,5);
+  ctx.fillRect(mx+mw/2-12,my+mh+4,24,4);
+  ctx.fillStyle=P.monBody;
   rr(ctx,mx+1,my,mw-2,mh,3);ctx.fill();
   ctx.strokeStyle="#555";ctx.lineWidth=1;ctx.stroke();
-  ctx.fillStyle="#2a2a2a";ctx.fillRect(mx+4,my+3,mw-8,mh-6);
+  ctx.fillStyle="#2a2a2a";
+  ctx.fillRect(mx+4,my+3,mw-8,mh-6);
+
   if(agent&&agent.busy){
-    ctx.fillStyle="#0d1520";ctx.fillRect(mx+5,my+4,mw-10,mh-8);
+    ctx.fillStyle="#0d1520";
+    ctx.fillRect(mx+5,my+4,mw-10,mh-8);
     const lc=["#00FF41","#4FA3FF","#FF6B9D","#FFD700"];
     for(let li=0;li<4;li++){
-      const lw=4+(fc*0.25+li*7+seatTile.tx)%14|0;
+      const lw=4+(fc*0.25+li*7+(seatTile.tx))%14|0;
       ctx.globalAlpha=0.8+0.2*Math.sin(fc*0.08+li);
-      ctx.fillStyle=lc[li%4];ctx.fillRect(mx+6,my+6+li*5,lw,2);
+      ctx.fillStyle=lc[li%4];
+      ctx.fillRect(mx+6,my+6+li*5,lw,2);
     }
     ctx.globalAlpha=1;
     if(Math.floor(fc/15)%2===0){ctx.fillStyle="#00FF41";ctx.fillRect(mx+6,my+mh-10,2,3);}
-  }else{
-    ctx.fillStyle="#0a0a14";ctx.fillRect(mx+5,my+4,mw-10,mh-8);
+  } else {
+    ctx.fillStyle="#0a0a14";
+    ctx.fillRect(mx+5,my+4,mw-10,mh-8);
     ctx.globalAlpha=0.4+0.3*Math.sin(fc*0.04+seatTile.tx*0.5);
     ctx.fillStyle="#3a6abf";
-    ctx.beginPath();ctx.arc(mx+mw/2,my+mh/2,3+Math.sin(fc*0.03+seatTile.ty)*2,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();
+    const bx=mx+mw/2,by=my+mh/2;
+    const r2=3+Math.sin(fc*0.03+seatTile.ty)*2;
+    ctx.arc(bx,by,r2,0,Math.PI*2);ctx.fill();
     ctx.globalAlpha=1;
   }
-  const kx=dsx+RT*0.6,ky=dsy+RT*0.55,kw=RT*1.8,kh=RT*0.28;
-  ctx.fillStyle="#8a8a8a";rr(ctx,kx,ky,kw,kh,2);ctx.fill();
+
+  const kx=dsx+RT*0.6, ky=dsy+RT*0.55, kw=RT*1.8, kh=RT*0.28;
+  ctx.fillStyle="#8a8a8a";
+  rr(ctx,kx,ky,kw,kh,2);ctx.fill();
   ctx.fillStyle="#6a6a6a";
-  for(let ki=0;ki<6;ki++)for(let kj=0;kj<2;kj++)ctx.fillRect(kx+3+ki*(kw/6-1),ky+3+kj*6,kw/6-3,4);
-  ctx.fillStyle="#888";rr(ctx,dsx+RT*2.6,dsy+RT*0.55,10,14,3);ctx.fill();
+  for(let ki=0;ki<6;ki++){
+    for(let kj=0;kj<2;kj++){
+      ctx.fillRect(kx+3+ki*(kw/6-1),ky+3+kj*6,kw/6-3,4);
+    }
+  }
+
+  ctx.fillStyle="#888";
+  rr(ctx,dsx+RT*2.6,dsy+RT*0.55,10,14,3);ctx.fill();
   ctx.fillStyle="#555";ctx.fillRect(dsx+RT*2.6+4,dsy+RT*0.55,2,6);
-  const chairY=isTop?dsy+RT+2:dsy-RT*0.6;
-  const chairX=seatTile.tx*RT+RT/2-RT*0.6,chairW=RT*1.2,chairH=RT*0.55;
+
+  const chairY = isTop ? dsy+RT+2 : dsy-RT*0.6;
+  const chairX = seatTile.tx*RT+RT/2-RT*0.6;
+  const chairW  = RT*1.2, chairH = RT*0.55;
   ctx.fillStyle=P.wood3;
-  ctx.fillRect(chairX+4,chairY+chairH,5,10);ctx.fillRect(chairX+chairW-9,chairY+chairH,5,10);
-  ctx.fillStyle=P.chair;rr(ctx,chairX,chairY,chairW,chairH,4);ctx.fill();
+  ctx.fillRect(chairX+4,chairY+chairH,5,10);
+  ctx.fillRect(chairX+chairW-9,chairY+chairH,5,10);
+  ctx.fillStyle=P.chair;
+  rr(ctx,chairX,chairY,chairW,chairH,4);ctx.fill();
   ctx.strokeStyle=P.chairDk;ctx.lineWidth=1.5;ctx.stroke();
   ctx.fillStyle=P.chairDk;
   ctx.fillRect(chairX+chairW/2-1,chairY+3,2,chairH-6);
@@ -200,43 +275,60 @@ function drawDeskStation(
 
 function drawPlant(ctx:CanvasRenderingContext2D,px:number,py:number,fc:number,idx:number){
   const sway=Math.sin(fc*0.02+idx)*1.5;
-  ctx.fillStyle=P.potDk;ctx.fillRect(px-9,py-10,18,12);
-  ctx.fillStyle=P.pot;ctx.fillRect(px-7,py-14,14,10);
+  ctx.fillStyle=P.potDk;
+  ctx.fillRect(px-9,py-10,18,12);
+  ctx.fillStyle=P.pot;
+  ctx.fillRect(px-7,py-14,14,10);
   ctx.fillStyle=P.potDk;ctx.fillRect(px-9,py-14,18,3);
-  ctx.fillStyle="#5D8A3C";ctx.fillRect(px-2,py-28,4,18);
-  ctx.strokeStyle=P.plantDk;ctx.lineWidth=1;
+  ctx.fillStyle="#5D8A3C";
+  ctx.fillRect(px-2,py-28,4,18);
   const leaf=(ox:number,oy:number,ow:number,oh:number,angle:number)=>{
     ctx.save();ctx.translate(px+sway,py-20);ctx.rotate(angle+sway*0.05);
     ctx.fillStyle=P.plant;
     ctx.beginPath();ctx.ellipse(ox,oy,ow,oh,0,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle=P.plantDk;
+    ctx.beginPath();ctx.moveTo(ox,oy-oh);ctx.lineTo(ox,oy+oh);ctx.stroke();
     ctx.restore();
   };
-  leaf(-14,-8,10,5,-0.4);leaf(14,-8,10,5,0.4);leaf(0,-16,8,12,0);
-  leaf(-8,-14,7,4,-0.7);leaf(8,-14,7,4,0.7);
+  ctx.strokeStyle=P.plantDk;ctx.lineWidth=1;
+  leaf(-14,-8,10,5,-0.4);
+  leaf(14,-8,10,5,0.4);
+  leaf(0,-16,8,12,0);
+  leaf(-8,-14,7,4,-0.7);
+  leaf(8,-14,7,4,0.7);
 }
 
 function drawBoxes(ctx:CanvasRenderingContext2D,bx:number,by:number){
-  ctx.fillStyle="#C8A54A";ctx.fillRect(bx-16,by-14,32,18);
+  ctx.fillStyle="#C8A54A";
+  ctx.fillRect(bx-16,by-14,32,18);
   ctx.strokeStyle="#9B7A2A";ctx.lineWidth=1.5;ctx.strokeRect(bx-16,by-14,32,18);
-  ctx.fillStyle="#9B7A2A";ctx.fillRect(bx-16,by-14,32,3);ctx.fillRect(bx,by-14,2,18);
-  ctx.fillStyle="#D4B055";ctx.fillRect(bx-10,by-28,22,14);
+  ctx.fillStyle="#9B7A2A";
+  ctx.fillRect(bx-16,by-14,32,3);
+  ctx.fillRect(bx,by-14,2,18);
+  ctx.fillStyle="#D4B055";
+  ctx.fillRect(bx-10,by-28,22,14);
   ctx.strokeStyle="#A88530";ctx.lineWidth=1.5;ctx.strokeRect(bx-10,by-28,22,14);
-  ctx.fillStyle="#A88530";ctx.fillRect(bx-10,by-28,22,3);ctx.fillRect(bx,by-28,2,14);
+  ctx.fillStyle="#A88530";
+  ctx.fillRect(bx-10,by-28,22,3);
+  ctx.fillRect(bx,by-28,2,14);
 }
 
 function drawNameBadge(ctx:CanvasRenderingContext2D,ag:AgentRT,fc:number){
   const seat=SEATS[ag.seatI],isTop=ag.seatI<5;
-  const bx=seat.tx*RT+RT/2,by=isTop?seat.ty*RT+RT+8:seat.ty*RT-18;
+  const bx=seat.tx*RT+RT/2;
+  const by=isTop?seat.ty*RT+RT+8:seat.ty*RT-18;
   const label=`${ag.def.name} · ${ag.def.role}`;
   ctx.font="bold 8px monospace";
   const tw=ctx.measureText(label).width;
   rr(ctx,bx-tw/2-5,by,tw+10,12,2);
   ctx.fillStyle="rgba(10,10,20,0.85)";ctx.fill();
   ctx.strokeStyle=ag.def.shirtColor;ctx.lineWidth=1;ctx.stroke();
-  ctx.fillStyle=ag.def.shirtColor;ctx.fillText(label,bx-tw/2,by+9);
+  ctx.fillStyle=ag.def.shirtColor;
+  ctx.fillText(label,bx-tw/2,by+9);
   if(ag.busy){
     ctx.fillStyle="#22c55e";
-    ctx.beginPath();ctx.arc(bx+tw/2+7,by+6,3,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(bx+tw/2+7,by+6,3,0,Math.PI*2);
+    ctx.fill();
     ctx.globalAlpha=0.4+0.4*Math.sin(fc*0.15);
     ctx.strokeStyle="#22c55e";ctx.lineWidth=1.5;
     ctx.beginPath();ctx.arc(bx+tw/2+7,by+6,5,0,Math.PI*2);ctx.stroke();
@@ -253,57 +345,69 @@ function drawScene(
   drawFloor(ctx);
   drawWalls(ctx);
   drawBookshelves(ctx);
-  for(let i=0;i<10;i++) drawDeskStation(ctx,SEATS[i],i<5,agents[i],fc);
+  for(let i=0;i<10;i++){
+    drawDeskStation(ctx,SEATS[i],i<5,agents[i],fc);
+  }
   drawPlant(ctx,RT+RT/2,H-RT-2,fc,0);
   drawPlant(ctx,W-RT-RT/2,H-RT-2,fc,1);
   drawBoxes(ctx,RT+RT*2,RT*2+RT/2);
   drawPlant(ctx,W-RT-RT/2,RT*2+8,fc,2);
   for(const ag of agents) drawNameBadge(ctx,ag,fc);
   const sorted=[...agents].sort((a,b)=>a.ay-b.ay);
-  for(const ag of sorted) drawChar(ctx,sprites,ag,Math.round(ag.ax*SCALE),Math.round(ag.ay*SCALE),fc);
-  for(const ag of agents) if(ag.bubble) drawBubble(ctx,ag,ag.bubble,Math.round(ag.ax*SCALE),Math.round(ag.ay*SCALE));
+  for(const ag of sorted)
+    drawChar(ctx,sprites,ag,Math.round(ag.ax*SCALE),Math.round(ag.ay*SCALE),fc);
+  for(const ag of agents)
+    if(ag.bubble)drawBubble(ctx,ag,ag.bubble,Math.round(ag.ax*SCALE),Math.round(ag.ay*SCALE));
 }
 
 function drawChar(
-  ctx:CanvasRenderingContext2D,sprites:(HTMLImageElement|null)[],
-  ag:AgentRT,sx:number,sy:number,fc:number
+  ctx:CanvasRenderingContext2D,
+  sprites:(HTMLImageElement|null)[],
+  ag:AgentRT,
+  sx:number,sy:number,fc:number
 ){
   const sprite=sprites[ag.si];
   if(sprite&&sprite.complete&&sprite.naturalWidth>0){
     const row=ag.dir;
     const col=ag.state==="type"?4+ag.animF%2:ag.state==="walk"?ag.animF%4:0;
-    ctx.drawImage(sprite,col*CHAR_W,row*CHAR_H,CHAR_W,CHAR_H,sx-CHAR_W*SCALE/2,sy-CHAR_H*SCALE,CHAR_W*SCALE,CHAR_H*SCALE);
+    ctx.drawImage(sprite,col*CHAR_W,row*CHAR_H,CHAR_W,CHAR_H,
+      sx-CHAR_W*SCALE/2,sy-CHAR_H*SCALE,CHAR_W*SCALE,CHAR_H*SCALE);
   }else{
     drawFallback(ctx,ag,sx,sy,fc);
   }
 }
 
 function drawFallback(ctx:CanvasRenderingContext2D,ag:AgentRT,sx:number,sy:number,fc:number){
-  const S=SCALE,{def,state}=ag,px=sx-8*S,py=sy-32*S;
-  const bob=state==="idle"?Math.sin(fc*0.04)*S*0.4:0,pyA=py+bob;
+  const S=SCALE,{def,state}=ag;
+  const px=sx-8*S,py=sy-32*S;
+  const bob=state==="idle"?Math.sin(fc*0.04)*S*0.4:0;
+  const pyA=py+bob;
   const lOff=state==="walk"?Math.sin(ag.animF*1.5)*2*S:0;
   ctx.fillStyle="rgba(0,0,0,0.2)";
   ctx.beginPath();ctx.ellipse(sx,sy+2,6*S,2*S,0,0,Math.PI*2);ctx.fill();
   ctx.fillStyle="#2C3E50";
-  ctx.fillRect(px+4*S,pyA+25*S+lOff,4*S,6*S);ctx.fillRect(px+8*S,pyA+25*S-lOff,4*S,6*S);
+  ctx.fillRect(px+4*S,pyA+25*S+lOff,4*S,6*S);
+  ctx.fillRect(px+8*S,pyA+25*S-lOff,4*S,6*S);
   ctx.fillStyle="#1a252f";
-  ctx.fillRect(px+3*S,pyA+31*S+lOff,6*S,2*S);ctx.fillRect(px+7*S,pyA+31*S-lOff,6*S,2*S);
+  ctx.fillRect(px+3*S,pyA+31*S+lOff,6*S,2*S);
+  ctx.fillRect(px+7*S,pyA+31*S-lOff,6*S,2*S);
   ctx.fillStyle=def.shirtColor;ctx.fillRect(px+2*S,pyA+14*S,12*S,12*S);
   ctx.fillStyle="rgba(255,255,255,0.3)";ctx.fillRect(px+6*S,pyA+14*S,4*S,3*S);
   const aOff=state==="type"?Math.sin(fc*0.25)*S:state==="walk"?Math.sin(ag.animF*1.5)*2*S:0;
   ctx.fillStyle=def.shirtColor;
-  ctx.fillRect(px,pyA+15*S+aOff,2*S,8*S);ctx.fillRect(px+14*S,pyA+15*S-aOff,2*S,8*S);
+  ctx.fillRect(px,pyA+15*S+aOff,2*S,8*S);
+  ctx.fillRect(px+14*S,pyA+15*S-aOff,2*S,8*S);
   ctx.fillStyle="#D4A574";
-  ctx.fillRect(px,pyA+23*S+aOff,2*S,2*S);ctx.fillRect(px+14*S,pyA+23*S-aOff,2*S,2*S);
-  ctx.fillRect(px+3*S,pyA+4*S,10*S,11*S);
+  ctx.fillRect(px,pyA+23*S+aOff,2*S,2*S);
+  ctx.fillRect(px+14*S,pyA+23*S-aOff,2*S,2*S);
+  ctx.fillStyle="#D4A574";ctx.fillRect(px+3*S,pyA+4*S,10*S,11*S);
   ctx.fillRect(px+5*S,pyA+14*S,6*S,2*S);
   ctx.fillStyle=def.hairColor;
   ctx.fillRect(px+3*S,pyA+4*S,10*S,4*S);
-  ctx.fillRect(px+3*S,pyA+7*S,2*S,3*S);ctx.fillRect(px+11*S,pyA+7*S,2*S,3*S);
-  ctx.fillStyle="#fff";
-  ctx.fillRect(px+5*S,pyA+9*S,3*S,2*S);ctx.fillRect(px+8*S,pyA+9*S,3*S,2*S);
-  ctx.fillStyle="#1a1a1a";
-  ctx.fillRect(px+6*S,pyA+10*S,1*S,1*S);ctx.fillRect(px+9*S,pyA+10*S,1*S,1*S);
+  ctx.fillRect(px+3*S,pyA+7*S,2*S,3*S);
+  ctx.fillRect(px+11*S,pyA+7*S,2*S,3*S);
+  ctx.fillStyle="#fff";ctx.fillRect(px+5*S,pyA+9*S,3*S,2*S);ctx.fillRect(px+8*S,pyA+9*S,3*S,2*S);
+  ctx.fillStyle="#1a1a1a";ctx.fillRect(px+6*S,pyA+10*S,1*S,1*S);ctx.fillRect(px+9*S,pyA+10*S,1*S,1*S);
   ctx.fillStyle=state==="idle"?"#c0392b":"#922b21";
   ctx.fillRect(px+6*S,pyA+12*S,4*S,state==="idle"?2*S:1*S);
   if(state==="idle"){
@@ -331,9 +435,12 @@ function drawBubble(ctx:CanvasRenderingContext2D,ag:AgentRT,text:string,sx:numbe
   const bw=Math.max(...lines.map(l=>ctx.measureText(l).width))+pad*2+4;
   const bh=lines.length*lh+pad*2;
   const bx=Math.max(4,Math.min(W-bw-4,sx-bw/2));
-  const charTop=sy-CHAR_H*SCALE-4,by=Math.max(4,charTop-bh-10);
-  ctx.fillStyle="rgba(0,0,0,0.3)";rr(ctx,bx+2,by+2,bw,bh,5);ctx.fill();
-  rr(ctx,bx,by,bw,bh,5);ctx.fillStyle="#FFFFF0";ctx.fill();
+  const charTop=sy-CHAR_H*SCALE-4;
+  const by=Math.max(4,charTop-bh-10);
+  ctx.fillStyle="rgba(0,0,0,0.3)";
+  rr(ctx,bx+2,by+2,bw,bh,5);ctx.fill();
+  rr(ctx,bx,by,bw,bh,5);
+  ctx.fillStyle="#FFFFF0";ctx.fill();
   ctx.strokeStyle=ag.def.shirtColor;ctx.lineWidth=2;ctx.stroke();
   const tx=Math.max(bx+10,Math.min(bx+bw-10,sx));
   ctx.fillStyle="#FFFFF0";
@@ -452,7 +559,8 @@ export default function Home(){
             consultTarget.bubble="Смотрю!";consultTarget.bubbleT=2;
             setTimeout(()=>{
               if(!ag)return;
-              returnToSeat(ag,"type");consultDone=true;
+              returnToSeat(ag,"type");
+              consultDone=true;
             },3200);
           });
         },1200);
@@ -501,7 +609,7 @@ export default function Home(){
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100vh",background:"#12120f",fontFamily:"'Courier New',monospace",color:"#e2e8f0",overflow:"hidden"}}>
       <div style={{display:"flex",alignItems:"center",gap:10,padding:"6px 14px",background:"#1a1a0e",borderBottom:"2px solid #3a3010",flexShrink:0}}>
-        <span style={{fontSize:14,fontWeight:"bold",letterSpacing:1,color:"#D4A843"}}>🏢 Dev Office</span>
+        <span style={{fontSize:14,fontWeight:"bold",letterSpacing:1,color:"#D4A843"}}>Dev Office</span>
         <div style={{display:"flex",gap:5,marginLeft:8,flexWrap:"wrap"}}>
           {AGENTS.map(a=>(
             <div key={a.id} title={`${a.name} (${a.role})`}
@@ -510,30 +618,37 @@ export default function Home(){
               onClick={()=>setSelectedId(selectedId===a.id?null:a.id)}/>
           ))}
         </div>
-        <span style={{marginLeft:"auto",fontSize:10,color:"#7a6830"}}>Выбери агента → дай задание → он начнёт работать</span>
+        <span style={{marginLeft:"auto",fontSize:10,color:"#7a6830"}}>
+          Выбери агента → дай задание → он начнёт работать
+        </span>
       </div>
       <div style={{display:"flex",flex:1,overflow:"hidden"}}>
         <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",padding:4}}>
           <canvas ref={canvasRef} width={W} height={H} onClick={handleCanvasClick}
             style={{maxWidth:"100%",maxHeight:"100%",imageRendering:"pixelated",cursor:"crosshair",
-              border:"3px solid #3a3010",boxShadow:"0 0 20px rgba(0,0,0,0.5);"}}/>
+              border:"3px solid #3a3010",boxShadow:"0 0 20px rgba(0,0,0,0.5)"}}/>
         </div>
         {selAgent&&(
-          <div style={{width:300,display:"flex",flexDirection:"column",background:"#1a1208",borderLeft:`3px solid ${selAgent.shirtColor}`,flexShrink:0}}>
+          <div style={{width:300,display:"flex",flexDirection:"column",background:"#1a1208",
+            borderLeft:`3px solid ${selAgent.shirtColor}`,flexShrink:0}}>
             <div style={{padding:"10px 14px",borderBottom:`2px solid ${selAgent.shirtColor}44`,background:"#221a0a"}}>
               <div style={{fontWeight:"bold",fontSize:13,color:selAgent.shirtColor}}>{selAgent.name}</div>
               <div style={{fontSize:10,color:"#7a6830"}}>{selAgent.role} Engineer</div>
             </div>
             <div style={{flex:1,overflowY:"auto",padding:10,display:"flex",flexDirection:"column",gap:7}}>
               {chatHist.length===0&&(
-                <div style={{color:"#4a3a10",fontSize:10,textAlign:"center",marginTop:40}}>Дай задание {selAgent.name} — он начнёт работать</div>
+                <div style={{color:"#4a3a10",fontSize:10,textAlign:"center",marginTop:40}}>
+                  Дай задание {selAgent.name} — он начнёт работать
+                </div>
               )}
               {chatHist.map((m,i)=>(
                 <div key={i} style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start"}}>
                   <div style={{maxWidth:"84%",padding:"6px 10px",borderRadius:7,fontSize:11,lineHeight:1.5,
                     background:m.role==="user"?"#3a2a05":"#221a0a",
                     border:m.role==="model"?`1px solid ${selAgent.shirtColor}55`:"1px solid #3a2a05",
-                    color:m.role==="user"?"#f0d070":"#d4c090"}}>{m.text}</div>
+                    color:m.role==="user"?"#f0d070":"#d4c090"}}>
+                    {m.text}
+                  </div>
                 </div>
               ))}
             </div>
