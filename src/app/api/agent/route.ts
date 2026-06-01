@@ -29,15 +29,14 @@ async function compressHistory(messages: ChatMsg[]): Promise<ChatMsg[]> {
     .map(m => `${m.role === "user" ? "Пользователь" : "Агент"}: ${m.text.slice(0, 400)}`)
     .join("\n");
 
+  const compressMsg = [{ role: "user" as const, content: `${summaryPrefix}Сделай краткое техническое резюме этого диалога (3-7 пунктов, только факты и решения, без воды):\n\n${dialog}` }];
   try {
-    const res = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
-      messages: [{
-        role: "user",
-        content: `${summaryPrefix}Сделай краткое техническое резюме этого диалога (3-7 пунктов, только факты и решения, без воды):\n\n${dialog}`,
-      }],
-      max_tokens: 300,
-    });
+    let res;
+    try {
+      res = await groq.chat.completions.create({ model: "llama-3.3-70b-versatile", messages: compressMsg, max_tokens: 300 });
+    } catch {
+      res = await groq.chat.completions.create({ model: "llama-3.1-8b-instant", messages: compressMsg, max_tokens: 300 });
+    }
     const summary = res.choices[0]?.message?.content || "";
     return [{ role: "system", text: `📋 Резюме предыдущего диалога:\n${summary}` }, ...recent];
   } catch {
@@ -372,15 +371,33 @@ export async function POST(req: NextRequest) {
           { role: "user", content: message },
         ];
 
-        // Tool-calling loop for Groq (max 6 rounds)
+        // Tool-calling loop for Groq (max 6 rounds), fallback to smaller model if 70b exhausted
+        let groqModel = "llama-3.3-70b-versatile";
         for (let round = 0; round < 6; round++) {
-          const groqRes = await groq.chat.completions.create({
-            model: "llama-3.3-70b-versatile",
-            messages: groqMessages,
-            max_tokens: 1024,
-            tools: groqTools,
-            tool_choice: "auto",
-          });
+          let groqRes;
+          try {
+            groqRes = await groq.chat.completions.create({
+              model: groqModel,
+              messages: groqMessages,
+              max_tokens: 1024,
+              tools: groqTools,
+              tool_choice: "auto",
+            });
+          } catch (groqErr) {
+            const groqErrMsg = String(groqErr);
+            if ((groqErrMsg.includes("429") || groqErrMsg.includes("rate_limit")) && groqModel !== "llama-3.1-8b-instant") {
+              groqModel = "llama-3.1-8b-instant";
+              groqRes = await groq.chat.completions.create({
+                model: groqModel,
+                messages: groqMessages,
+                max_tokens: 1024,
+                tools: groqTools,
+                tool_choice: "auto",
+              });
+            } else {
+              throw groqErr;
+            }
+          }
           const choice = groqRes.choices[0];
           const msg = choice.message;
           groqMessages.push(msg as Groq.Chat.ChatCompletionMessageParam);
