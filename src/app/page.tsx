@@ -21,11 +21,19 @@ const SPRITE_URLS = [0,1,2,3,4,5].map(
 );
 
 const SEATS = [
+  // Top row — face up, desk above at ty=2
   {tx:2, ty:3, dir:UP   as Dir},
   {tx:5, ty:3, dir:UP   as Dir},
   {tx:8, ty:3, dir:UP   as Dir},
   {tx:11,ty:3, dir:UP   as Dir},
   {tx:14,ty:3, dir:UP   as Dir},
+  // Middle row — face up, desk above at ty=4
+  {tx:2, ty:5, dir:UP   as Dir},
+  {tx:5, ty:5, dir:UP   as Dir},
+  {tx:8, ty:5, dir:UP   as Dir},
+  {tx:11,ty:5, dir:UP   as Dir},
+  {tx:14,ty:5, dir:UP   as Dir},
+  // Bottom row — face down, desk below at ty=8
   {tx:2, ty:7, dir:DOWN as Dir},
   {tx:5, ty:7, dir:DOWN as Dir},
   {tx:8, ty:7, dir:DOWN as Dir},
@@ -34,6 +42,7 @@ const SEATS = [
 ];
 const DESK_OBS = [
   {tx:2,ty:2},{tx:5,ty:2},{tx:8,ty:2},{tx:11,ty:2},{tx:14,ty:2},
+  {tx:2,ty:4},{tx:5,ty:4},{tx:8,ty:4},{tx:11,ty:4},{tx:14,ty:4},
   {tx:2,ty:8},{tx:5,ty:8},{tx:8,ty:8},{tx:11,ty:8},{tx:14,ty:8},
 ];
 
@@ -201,7 +210,7 @@ function drawBoxes(ctx:CanvasRenderingContext2D,bx:number,by:number){
   ctx.fillStyle="#A88530";ctx.fillRect(bx-10,by-28,22,3);ctx.fillRect(bx,by-28,2,14);
 }
 function drawNameBadge(ctx:CanvasRenderingContext2D,ag:AgentRT,fc:number){
-  const seat=SEATS[ag.seatI],isTop=ag.seatI<5;
+  const seat=SEATS[ag.seatI],isTop=ag.seatI<10;
   const bx=seat.tx*RT+RT/2,by=isTop?seat.ty*RT+RT+8:seat.ty*RT-18;
   const label=`${ag.def.name} · ${ag.def.role}`;
   ctx.font="bold 8px monospace";
@@ -218,7 +227,7 @@ function drawNameBadge(ctx:CanvasRenderingContext2D,ag:AgentRT,fc:number){
 }
 function drawScene(ctx:CanvasRenderingContext2D,agents:AgentRT[],sprites:(HTMLImageElement|null)[],fc:number){
   drawFloor(ctx);drawWalls(ctx);drawBookshelves(ctx);
-  for(let i=0;i<10;i++)drawDeskStation(ctx,SEATS[i],i<5,agents[i],fc);
+  for(let i=0;i<15;i++)drawDeskStation(ctx,SEATS[i],i<10,agents[i],fc);
   drawPlant(ctx,RT+RT/2,H-RT-2,fc,0);drawPlant(ctx,W-RT-RT/2,H-RT-2,fc,1);
   drawBoxes(ctx,RT+RT*2,RT*2+RT/2);drawPlant(ctx,W-RT-RT/2,RT*2+8,fc,2);
   for(const ag of agents)drawNameBadge(ctx,ag,fc);
@@ -320,7 +329,7 @@ async function idbGetAll(): Promise<Record<string, unknown>[]> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(IDB_STORE, 'readonly');
     const req = tx.objectStore(IDB_STORE).getAll();
-    req.onsuccess = () => resolve((req.result as Record<string, unknown>[]));
+    req.onsuccess = () => resolve((req.result as Record<string, unknown>[]));;
     req.onerror = () => reject(req.error);
   });
 }
