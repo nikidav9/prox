@@ -9,42 +9,73 @@ export const maxDuration = 60;
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
 
-const KEEP_RECENT = 4;   // messages kept verbatim after compression
-const COMPRESS_AT = 12;  // compress when history exceeds this
+// ── Model pool ────────────────────────────────────────────────────────────────
+// Each model tried in order; on 429/quota/tool-error it's cooled down and skipped
+type Provider = "gemini" | "groq";
+interface ModelEntry { id: string; provider: Provider; model: string }
 
-// Summarize old messages via Groq (cheap, fast) — like Claude Code's compaction
+const MODEL_POOL: ModelEntry[] = [
+  { id: "gemini-2.0-flash",   provider: "gemini", model: "gemini-2.0-flash" },
+  { id: "gemini-1.5-flash",   provider: "gemini", model: "gemini-1.5-flash" },
+  { id: "groq-70b",           provider: "groq",   model: "llama-3.3-70b-versatile" },
+  { id: "groq-8b",            provider: "groq",   model: "llama-3.1-8b-instant" },
+  { id: "groq-gemma",         provider: "groq",   model: "gemma2-9b-it" },
+];
+
+// In-memory cooldown: modelId → timestamp when it's available again
+const cooldowns = new Map<string, number>();
+
+function availableModels(): ModelEntry[] {
+  const now = Date.now();
+  return MODEL_POOL.filter(m => (cooldowns.get(m.id) ?? 0) <= now);
+}
+
+function markCooled(id: string, msg: string) {
+  // Extract retry-after from error message, default 20 min
+  const secMatch = msg.match(/try again in ([\d.]+)s/i) || msg.match(/retry in ([\d.]+)s/i);
+  const minMatch = msg.match(/try again in (\d+)m/i);
+  const waitMs = secMatch
+    ? Math.ceil(parseFloat(secMatch[1]) * 1000)
+    : minMatch ? parseInt(minMatch[1]) * 60_000
+    : 20 * 60_000;
+  cooldowns.set(id, Date.now() + Math.min(waitMs + 5000, 24 * 3600_000));
+}
+
+function isRateError(msg: string) {
+  return msg.includes("429") || msg.includes("quota") || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("rate_limit");
+}
+function isToolError(msg: string) {
+  return msg.includes("400") || msg.includes("tool_use_failed") || msg.includes("Failed to call");
+}
+
+// ── Context compression ───────────────────────────────────────────────────────
+const KEEP_RECENT = 4;
+const COMPRESS_AT = 12;
+
 async function compressHistory(messages: ChatMsg[]): Promise<ChatMsg[]> {
   if (!groq || messages.length <= COMPRESS_AT) return messages;
-
   const toSummarize = messages.slice(0, -KEEP_RECENT);
   const recent = messages.slice(-KEEP_RECENT);
-
-  // If there's already a summary at the top, include it in what we're summarizing
   const summaryPrefix = toSummarize[0]?.role === "system" && toSummarize[0].text.startsWith("📋")
-    ? toSummarize[0].text + "\n\n"
-    : "";
-
-  const dialog = toSummarize
-    .filter(m => m.role !== "system")
-    .map(m => `${m.role === "user" ? "Пользователь" : "Агент"}: ${m.text.slice(0, 400)}`)
-    .join("\n");
-
+    ? toSummarize[0].text + "\n\n" : "";
+  const dialog = toSummarize.filter(m => m.role !== "system")
+    .map(m => `${m.role === "user" ? "Пользователь" : "Агент"}: ${m.text.slice(0, 400)}`).join("\n");
   const compressMsg = [{ role: "user" as const, content: `${summaryPrefix}Сделай краткое техническое резюме этого диалога (3-7 пунктов, только факты и решения, без воды):\n\n${dialog}` }];
   try {
     let res;
-    try {
-      res = await groq.chat.completions.create({ model: "llama-3.3-70b-versatile", messages: compressMsg, max_tokens: 300 });
-    } catch {
-      res = await groq.chat.completions.create({ model: "llama-3.1-8b-instant", messages: compressMsg, max_tokens: 300 });
+    for (const m of ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "gemma2-9b-it"]) {
+      try { res = await groq.chat.completions.create({ model: m, messages: compressMsg, max_tokens: 300 }); break; }
+      catch { /* try next */ }
     }
+    if (!res) return messages.slice(-COMPRESS_AT);
     const summary = res.choices[0]?.message?.content || "";
     return [{ role: "system", text: `📋 Резюме предыдущего диалога:\n${summary}` }, ...recent];
   } catch {
-    // If compression fails, just trim
     return messages.slice(-COMPRESS_AT);
   }
 }
 
+// ── GitHub helpers ────────────────────────────────────────────────────────────
 async function githubFetch(token: string, path: string, method = "GET", body?: object) {
   const res = await fetch(`https://api.github.com${path}`, {
     method,
@@ -62,185 +93,71 @@ async function githubFetch(token: string, path: string, method = "GET", body?: o
 async function runGithubTool(name: string, args: Record<string, unknown>, token: string): Promise<object> {
   try {
     switch (name) {
-      case "github_get_user":
-        return await githubFetch(token, "/user");
-      case "github_list_repos":
-        return await githubFetch(token, "/user/repos?per_page=20&sort=updated");
-      case "github_create_repo":
-        return await githubFetch(token, "/user/repos", "POST", {
-          name: args.name, description: args.description ?? "",
-          private: args.private ?? false, auto_init: args.auto_init ?? true,
-        });
-      case "github_get_repo":
-        return await githubFetch(token, `/repos/${args.owner}/${args.repo}`);
+      case "github_get_user": return await githubFetch(token, "/user");
+      case "github_list_repos": return await githubFetch(token, "/user/repos?per_page=20&sort=updated");
+      case "github_create_repo": return await githubFetch(token, "/user/repos", "POST", {
+        name: args.name, description: args.description ?? "", private: args.private ?? false, auto_init: args.auto_init ?? true,
+      });
+      case "github_get_repo": return await githubFetch(token, `/repos/${args.owner}/${args.repo}`);
       case "github_create_or_update_file": {
         const content = Buffer.from(String(args.content)).toString("base64");
         let sha: string | undefined;
-        try {
-          const ex = await githubFetch(token, `/repos/${args.owner}/${args.repo}/contents/${args.path}`);
-          if ((ex as Record<string,unknown>).sha) sha = (ex as Record<string,unknown>).sha as string;
-        } catch {}
+        try { const ex = await githubFetch(token, `/repos/${args.owner}/${args.repo}/contents/${args.path}`); if ((ex as Record<string,unknown>).sha) sha = (ex as Record<string,unknown>).sha as string; } catch {}
         return await githubFetch(token, `/repos/${args.owner}/${args.repo}/contents/${args.path}`, "PUT", {
-          message: args.message ?? "Update file", content,
-          ...(sha ? { sha } : {}),
-          branch: args.branch ?? "main",
+          message: args.message ?? "Update file", content, ...(sha ? { sha } : {}), branch: args.branch ?? "main",
         });
       }
       case "github_create_branch": {
         const repo = await githubFetch(token, `/repos/${args.owner}/${args.repo}`) as Record<string,unknown>;
         const ref = await githubFetch(token, `/repos/${args.owner}/${args.repo}/git/refs/heads/${repo.default_branch ?? "main"}`) as Record<string,unknown>;
-        return await githubFetch(token, `/repos/${args.owner}/${args.repo}/git/refs`, "POST", {
-          ref: `refs/heads/${args.branch}`, sha: (ref.object as Record<string,unknown>)?.sha,
-        });
+        return await githubFetch(token, `/repos/${args.owner}/${args.repo}/git/refs`, "POST", { ref: `refs/heads/${args.branch}`, sha: (ref.object as Record<string,unknown>)?.sha });
       }
-      case "github_list_issues":
-        return await githubFetch(token, `/repos/${args.owner}/${args.repo}/issues?state=open`);
-      case "github_create_issue":
-        return await githubFetch(token, `/repos/${args.owner}/${args.repo}/issues`, "POST", {
-          title: args.title, body: args.body ?? "", labels: args.labels ?? [],
-        });
-      case "github_list_files":
-        return await githubFetch(token, `/repos/${args.owner}/${args.repo}/contents/${args.path ?? ""}`);
-      default:
-        return { error: `Unknown tool: ${name}` };
+      case "github_list_issues": return await githubFetch(token, `/repos/${args.owner}/${args.repo}/issues?state=open`);
+      case "github_create_issue": return await githubFetch(token, `/repos/${args.owner}/${args.repo}/issues`, "POST", { title: args.title, body: args.body ?? "", labels: args.labels ?? [] });
+      case "github_list_files": return await githubFetch(token, `/repos/${args.owner}/${args.repo}/contents/${args.path ?? ""}`);
+      default: return { error: `Unknown tool: ${name}` };
     }
-  } catch (err) {
-    return { error: String(err) };
-  }
+  } catch (err) { return { error: String(err) }; }
 }
 
-const CONSULT_TOOL: Tool = {
-  functionDeclarations: [{
-    name: "consult_agent",
-    description: "Ask a colleague agent a specific question and get their expert answer",
-    parameters: {
-      type: SchemaType.OBJECT,
-      properties: {
-        agentId: { type: SchemaType.STRING, description: "Agent ID to consult (e.g. frontend, backend, devops)" },
-        question: { type: SchemaType.STRING, description: "Specific question for the agent" },
-      },
-      required: ["agentId", "question"],
-    },
-  }],
-};
-
+// ── Gemini tool definitions ───────────────────────────────────────────────────
 const GITHUB_TOOLS: Tool[] = [{
   functionDeclarations: [
-    {
-      name: "github_get_user",
-      description: "Get the authenticated GitHub user info (login, name)",
-      parameters: { type: SchemaType.OBJECT, properties: {} },
-    },
-    {
-      name: "github_list_repos",
-      description: "List the user's GitHub repositories",
-      parameters: { type: SchemaType.OBJECT, properties: {} },
-    },
-    {
-      name: "github_create_repo",
-      description: "Create a new GitHub repository",
-      parameters: {
-        type: SchemaType.OBJECT,
-        properties: {
-          name: { type: SchemaType.STRING, description: "Repo name (no spaces, use hyphens)" },
-          description: { type: SchemaType.STRING },
-          private: { type: SchemaType.BOOLEAN },
-          auto_init: { type: SchemaType.BOOLEAN, description: "Initialize with README" },
-        },
-        required: ["name"],
-      },
-    },
-    {
-      name: "github_get_repo",
-      description: "Get info about a GitHub repository",
-      parameters: {
-        type: SchemaType.OBJECT,
-        properties: {
-          owner: { type: SchemaType.STRING },
-          repo: { type: SchemaType.STRING },
-        },
-        required: ["owner", "repo"],
-      },
-    },
-    {
-      name: "github_create_or_update_file",
-      description: "Create or update a file in a GitHub repository",
-      parameters: {
-        type: SchemaType.OBJECT,
-        properties: {
-          owner: { type: SchemaType.STRING },
-          repo: { type: SchemaType.STRING },
-          path: { type: SchemaType.STRING, description: "File path e.g. src/index.ts" },
-          content: { type: SchemaType.STRING, description: "Full file content as plain text" },
-          message: { type: SchemaType.STRING, description: "Commit message" },
-          branch: { type: SchemaType.STRING, description: "Branch name, default main" },
-        },
-        required: ["owner", "repo", "path", "content", "message"],
-      },
-    },
-    {
-      name: "github_create_branch",
-      description: "Create a new branch in a repository",
-      parameters: {
-        type: SchemaType.OBJECT,
-        properties: {
-          owner: { type: SchemaType.STRING },
-          repo: { type: SchemaType.STRING },
-          branch: { type: SchemaType.STRING, description: "New branch name" },
-        },
-        required: ["owner", "repo", "branch"],
-      },
-    },
-    {
-      name: "github_list_files",
-      description: "List files in a repository directory",
-      parameters: {
-        type: SchemaType.OBJECT,
-        properties: {
-          owner: { type: SchemaType.STRING },
-          repo: { type: SchemaType.STRING },
-          path: { type: SchemaType.STRING, description: "Directory path, empty for root" },
-        },
-        required: ["owner", "repo"],
-      },
-    },
-    {
-      name: "github_list_issues",
-      description: "List open issues in a repository",
-      parameters: {
-        type: SchemaType.OBJECT,
-        properties: {
-          owner: { type: SchemaType.STRING },
-          repo: { type: SchemaType.STRING },
-        },
-        required: ["owner", "repo"],
-      },
-    },
-    {
-      name: "github_create_issue",
-      description: "Create a new GitHub issue",
-      parameters: {
-        type: SchemaType.OBJECT,
-        properties: {
-          owner: { type: SchemaType.STRING },
-          repo: { type: SchemaType.STRING },
-          title: { type: SchemaType.STRING },
-          body: { type: SchemaType.STRING },
-          labels: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
-        },
-        required: ["owner", "repo", "title"],
-      },
-    },
+    { name: "github_get_user", description: "Get the authenticated GitHub user info", parameters: { type: SchemaType.OBJECT, properties: {} } },
+    { name: "github_list_repos", description: "List the user's GitHub repositories", parameters: { type: SchemaType.OBJECT, properties: {} } },
+    { name: "github_create_repo", description: "Create a new GitHub repository", parameters: { type: SchemaType.OBJECT, properties: { name: { type: SchemaType.STRING }, description: { type: SchemaType.STRING }, private: { type: SchemaType.BOOLEAN }, auto_init: { type: SchemaType.BOOLEAN } }, required: ["name"] } },
+    { name: "github_get_repo", description: "Get info about a GitHub repository", parameters: { type: SchemaType.OBJECT, properties: { owner: { type: SchemaType.STRING }, repo: { type: SchemaType.STRING } }, required: ["owner", "repo"] } },
+    { name: "github_create_or_update_file", description: "Create or update a file in a GitHub repository", parameters: { type: SchemaType.OBJECT, properties: { owner: { type: SchemaType.STRING }, repo: { type: SchemaType.STRING }, path: { type: SchemaType.STRING }, content: { type: SchemaType.STRING }, message: { type: SchemaType.STRING }, branch: { type: SchemaType.STRING } }, required: ["owner", "repo", "path", "content", "message"] } },
+    { name: "github_create_branch", description: "Create a new branch in a repository", parameters: { type: SchemaType.OBJECT, properties: { owner: { type: SchemaType.STRING }, repo: { type: SchemaType.STRING }, branch: { type: SchemaType.STRING } }, required: ["owner", "repo", "branch"] } },
+    { name: "github_list_files", description: "List files in a repository directory", parameters: { type: SchemaType.OBJECT, properties: { owner: { type: SchemaType.STRING }, repo: { type: SchemaType.STRING }, path: { type: SchemaType.STRING } }, required: ["owner", "repo"] } },
+    { name: "github_list_issues", description: "List open issues in a repository", parameters: { type: SchemaType.OBJECT, properties: { owner: { type: SchemaType.STRING }, repo: { type: SchemaType.STRING } }, required: ["owner", "repo"] } },
+    { name: "github_create_issue", description: "Create a new GitHub issue", parameters: { type: SchemaType.OBJECT, properties: { owner: { type: SchemaType.STRING }, repo: { type: SchemaType.STRING }, title: { type: SchemaType.STRING }, body: { type: SchemaType.STRING }, labels: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } } }, required: ["owner", "repo", "title"] } },
   ],
 }];
 
-// Call another agent and get their response (depth-limited to prevent loops)
+// Groq tool definitions (OpenAI format)
+function buildGroqTools(hasGithub: boolean) {
+  return [
+    { type: "function" as const, function: { name: "consult_agent", description: "Ask a colleague agent a specific question", parameters: { type: "object", properties: { agentId: { type: "string", description: `Agent ID, one of: ${AGENTS.map(a=>a.id).join(", ")}` }, question: { type: "string" } }, required: ["agentId","question"] } } },
+    ...(hasGithub ? [
+      { type: "function" as const, function: { name: "github_get_user", description: "Get authenticated GitHub user", parameters: { type: "object", properties: {} } } },
+      { type: "function" as const, function: { name: "github_list_repos", description: "List user repos", parameters: { type: "object", properties: {} } } },
+      { type: "function" as const, function: { name: "github_create_repo", description: "Create a new repo", parameters: { type: "object", properties: { name: { type: "string" }, description: { type: "string" }, private: { type: "boolean" }, auto_init: { type: "boolean" } }, required: ["name"] } } },
+      { type: "function" as const, function: { name: "github_create_or_update_file", description: "Create or update file in repo", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, path: { type: "string" }, content: { type: "string" }, message: { type: "string" }, branch: { type: "string" } }, required: ["owner", "repo", "path", "content", "message"] } } },
+      { type: "function" as const, function: { name: "github_create_branch", description: "Create a branch", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, branch: { type: "string" } }, required: ["owner", "repo", "branch"] } } },
+      { type: "function" as const, function: { name: "github_list_files", description: "List files in repo", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, path: { type: "string" } }, required: ["owner", "repo"] } } },
+      { type: "function" as const, function: { name: "github_list_issues", description: "List open issues", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" } }, required: ["owner", "repo"] } } },
+      { type: "function" as const, function: { name: "github_create_issue", description: "Create an issue", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, title: { type: "string" }, body: { type: "string" } }, required: ["owner", "repo", "title"] } } },
+    ] : []),
+  ];
+}
+
+// ── Inter-agent communication ─────────────────────────────────────────────────
 async function consultAgent(targetId: string, question: string, githubToken: string, depth: number): Promise<string> {
   if (depth >= 2) return "[максимальная глубина цепочки достигнута]";
   const target = AGENTS.find(a => a.id === targetId);
   if (!target) return `[агент не найден: ${targetId}. Доступные id: ${AGENTS.map(a=>a.id).join(", ")}]`;
   try {
-    // On Vercel use the stable production URL, not VERCEL_URL (which changes per deployment)
     const baseUrl = process.env.APP_URL || "https://prox-two-zeta.vercel.app";
     const res = await fetch(`${baseUrl}/api/agent`, {
       method: "POST",
@@ -254,184 +171,144 @@ async function consultAgent(targetId: string, question: string, githubToken: str
   }
 }
 
+// ── Main handler ──────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   try {
     const { message, agentId, history, githubToken: clientToken, _depth = 0 } = await req.json();
-    if (!message || !agentId)
-      return NextResponse.json({ error: "message and agentId required" }, { status: 400 });
-
+    if (!message || !agentId) return NextResponse.json({ error: "message and agentId required" }, { status: 400 });
     const agent = AGENTS.find((a) => a.id === agentId);
-    if (!agent)
-      return NextResponse.json({ error: "Unknown agent" }, { status: 400 });
+    if (!agent) return NextResponse.json({ error: "Unknown agent" }, { status: 400 });
 
     const githubToken = clientToken?.trim() || process.env.GITHUB_TOKEN || "";
     const hasGithub = !!githubToken;
 
     const agentList = AGENTS.map(a => `${a.id} — ${a.name} (${a.role})`).join("\n");
     const systemInstruction = agent.soul
-      + (hasGithub ? "\n\nУ тебя есть доступ к GitHub через инструменты. Делай сразу через инструменты, сначала вызывай github_get_user." : "")
-      + `\n\nТЫ МОЖЕШЬ КОНСУЛЬТИРОВАТЬСЯ С КОЛЛЕГАМИ через инструмент consult_agent.\nСписок агентов:\n${agentList}\nИспользуй когда задача явно требует экспертизы другого специалиста. Передавай конкретный вопрос, не весь контекст.`;
+      + (hasGithub ? "\n\nУ тебя есть доступ к GitHub через инструменты. Делай сразу, сначала вызывай github_get_user." : "")
+      + `\n\nТЫ МОЖЕШЬ КОНСУЛЬТИРОВАТЬСЯ С КОЛЛЕГАМИ через consult_agent.\nСписок агентов:\n${agentList}`;
 
-    const model = genAI.getGenerativeModel({
-      model: "gemini-2.0-flash",
-      systemInstruction,
-      tools: hasGithub ? GITHUB_TOOLS : [],
-    });
-
-    // Load stored history and compress if long
+    // Load and compress history
     const stored: ChatMsg[] = await loadHistory(agentId);
     const fullHistory: ChatMsg[] = stored.length > 0 ? stored : (history || []);
     const compressedHistory = await compressHistory(fullHistory);
-    // Save user message immediately (before model call) so it's never lost on error
     const userMsg: ChatMsg = { role: "user", text: message };
     await saveHistory(agentId, [...compressedHistory, userMsg]);
 
     const trimmedHistory = compressedHistory.filter(m => m.role === "user" || m.role === "model");
-
-    const chat = model.startChat({
-      history: trimmedHistory.map((msg: { role: string; text: string }) => ({
-        role: msg.role,
-        parts: [{ text: msg.text }],
-      })),
-    });
-
-    // Auto-retry on rate limit (429) — wait the time Gemini specifies, then retry
-    async function sendWithRetry(payload: Parameters<typeof chat.sendMessage>[0]) {
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-          return await chat.sendMessage(payload, { generationConfig: { maxOutputTokens: 800 } } as never);
-        } catch (err) {
-          const msg = String(err);
-          const match = msg.match(/retry in ([\d.]+)s/i);
-          const waitMs = match ? Math.ceil(parseFloat(match[1]) * 1000) : 15_000;
-          if (attempt < 2 && waitMs <= 25_000) {
-            await new Promise(r => setTimeout(r, waitMs));
-          } else throw err;
-        }
-      }
-      throw new Error("Max retries exceeded");
-    }
+    const groqHistory = compressedHistory.filter(m => m.role === "user" || m.role === "model")
+      .map(m => ({ role: (m.role === "model" ? "assistant" : "user") as "user" | "assistant", content: m.text }));
 
     let text = "";
     const githubActions: string[] = [];
-    let usedGroq = false;
+    let lastError = "";
+    let usedProvider = "gemini";
 
-    try {
-      let result = await sendWithRetry(message);
+    // Try each available model in pool order
+    const pool = availableModels();
+    if (pool.length === 0) {
+      return NextResponse.json({ error: "Все модели временно недоступны (лимиты). Подождите немного и попробуйте снова." }, { status: 429 });
+    }
 
-      for (let i = 0; i < 8; i++) {
-        const parts = result.response.candidates?.[0]?.content?.parts ?? [];
-        const calls = parts.filter((p) => p.functionCall);
-        if (calls.length === 0) break;
+    for (const entry of pool) {
+      try {
+        if (entry.provider === "gemini") {
+          const model = genAI.getGenerativeModel({
+            model: entry.model,
+            systemInstruction,
+            tools: hasGithub ? GITHUB_TOOLS : [],
+          });
+          const chat = model.startChat({
+            history: trimmedHistory.map(msg => ({ role: msg.role, parts: [{ text: msg.text }] })),
+          });
 
-        const responses = await Promise.all(
-          calls.map(async (part) => {
-            const fc = part.functionCall!;
-            let toolResult: object;
-            toolResult = await runGithubTool(fc.name, fc.args as Record<string, unknown>, githubToken);
-            githubActions.push(`${fc.name}: ${JSON.stringify(toolResult).slice(0, 150)}`);
-            return { functionResponse: { name: fc.name, response: toolResult } };
-          })
-        );
-        result = await sendWithRetry(responses as Parameters<typeof chat.sendMessage>[0]);
-      }
+          async function geminiSend(payload: Parameters<typeof chat.sendMessage>[0]) {
+            for (let attempt = 0; attempt < 2; attempt++) {
+              try {
+                return await chat.sendMessage(payload, { generationConfig: { maxOutputTokens: 800 } } as never);
+              } catch (err) {
+                const m = String(err);
+                const match = m.match(/retry in ([\d.]+)s/i);
+                const waitMs = match ? Math.ceil(parseFloat(match[1]) * 1000) : 0;
+                if (attempt < 1 && waitMs > 0 && waitMs <= 20_000) await new Promise(r => setTimeout(r, waitMs));
+                else throw err;
+              }
+            }
+            throw new Error("Max retries");
+          }
 
-      text = result.response.text();
-    } catch (geminiErr) {
-      const geminiMsg = String(geminiErr);
-      const isQuota = geminiMsg.includes("429") || geminiMsg.includes("quota") || geminiMsg.includes("RESOURCE_EXHAUSTED");
-      const isBadTool = geminiMsg.includes("400") || geminiMsg.includes("tool_use_failed") || geminiMsg.includes("Failed to call");
+          let result = await geminiSend(message);
+          for (let i = 0; i < 8; i++) {
+            const parts = result.response.candidates?.[0]?.content?.parts ?? [];
+            const calls = parts.filter(p => p.functionCall);
+            if (calls.length === 0) break;
+            const responses = await Promise.all(calls.map(async part => {
+              const fc = part.functionCall!;
+              const toolResult = await runGithubTool(fc.name, fc.args as Record<string, unknown>, githubToken);
+              githubActions.push(`${fc.name}: ${JSON.stringify(toolResult).slice(0, 150)}`);
+              return { functionResponse: { name: fc.name, response: toolResult } };
+            }));
+            result = await geminiSend(responses as Parameters<typeof chat.sendMessage>[0]);
+          }
+          text = result.response.text();
+          usedProvider = entry.id;
+          break;
 
-      if ((isQuota || isBadTool) && groq) {
-        usedGroq = true;
-        const groqHistory = compressedHistory
-          .filter(m => m.role === "user" || m.role === "model")
-          .map((m) => ({
-            role: (m.role === "model" ? "assistant" : "user") as "user" | "assistant",
-            content: m.text,
-          }));
+        } else if (entry.provider === "groq" && groq) {
+          const groqTools = buildGroqTools(hasGithub);
+          const groqMessages: Groq.Chat.ChatCompletionMessageParam[] = [
+            { role: "system", content: systemInstruction },
+            ...groqHistory,
+            { role: "user", content: message },
+          ];
 
-        // Tools for Groq (GitHub + consult_agent)
-        const groqTools = [
-          { type: "function" as const, function: { name: "consult_agent", description: "Ask a colleague agent", parameters: { type: "object", properties: { agentId: { type: "string", description: `Agent ID, one of: ${AGENTS.map(a=>a.id).join(", ")}` }, question: { type: "string" } }, required: ["agentId","question"] } } },
-          ...(hasGithub ? [
-          { type: "function" as const, function: { name: "github_get_user", description: "Get authenticated GitHub user", parameters: { type: "object", properties: {} } } },
-          { type: "function" as const, function: { name: "github_list_repos", description: "List user repos", parameters: { type: "object", properties: {} } } },
-          { type: "function" as const, function: { name: "github_create_repo", description: "Create a new repo", parameters: { type: "object", properties: { name: { type: "string" }, description: { type: "string" }, private: { type: "boolean" }, auto_init: { type: "boolean" } }, required: ["name"] } } },
-          { type: "function" as const, function: { name: "github_create_or_update_file", description: "Create or update file in repo", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, path: { type: "string" }, content: { type: "string" }, message: { type: "string" }, branch: { type: "string" } }, required: ["owner", "repo", "path", "content", "message"] } } },
-          { type: "function" as const, function: { name: "github_create_branch", description: "Create a branch", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, branch: { type: "string" } }, required: ["owner", "repo", "branch"] } } },
-          { type: "function" as const, function: { name: "github_list_files", description: "List files in repo", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, path: { type: "string" } }, required: ["owner", "repo"] } } },
-          { type: "function" as const, function: { name: "github_list_issues", description: "List open issues", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" } }, required: ["owner", "repo"] } } },
-          { type: "function" as const, function: { name: "github_create_issue", description: "Create an issue", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, title: { type: "string" }, body: { type: "string" } }, required: ["owner", "repo", "title"] } } },
-        ] : [])];
-
-        const groqMessages: Groq.Chat.ChatCompletionMessageParam[] = [
-          { role: "system", content: systemInstruction },
-          ...groqHistory,
-          { role: "user", content: message },
-        ];
-
-        // Tool-calling loop for Groq (max 6 rounds), fallback to smaller model if 70b exhausted
-        let groqModel = "llama-3.3-70b-versatile";
-        for (let round = 0; round < 6; round++) {
-          let groqRes;
-          try {
-            groqRes = await groq.chat.completions.create({
-              model: groqModel,
+          for (let round = 0; round < 6; round++) {
+            const groqRes = await groq.chat.completions.create({
+              model: entry.model,
               messages: groqMessages,
               max_tokens: 1024,
               tools: groqTools,
               tool_choice: "auto",
             });
-          } catch (groqErr) {
-            const groqErrMsg = String(groqErr);
-            if ((groqErrMsg.includes("429") || groqErrMsg.includes("rate_limit")) && groqModel !== "llama-3.1-8b-instant") {
-              groqModel = "llama-3.1-8b-instant";
-              groqRes = await groq.chat.completions.create({
-                model: groqModel,
-                messages: groqMessages,
-                max_tokens: 1024,
-                tools: groqTools,
-                tool_choice: "auto",
-              });
-            } else {
-              throw groqErr;
+            const choice = groqRes.choices[0];
+            const msg = choice.message;
+            groqMessages.push(msg as Groq.Chat.ChatCompletionMessageParam);
+
+            if (!msg.tool_calls || msg.tool_calls.length === 0) {
+              text = msg.content || "Нет ответа";
+              break;
+            }
+            for (const tc of msg.tool_calls) {
+              const args = JSON.parse(tc.function.arguments || "{}");
+              let toolResult: object;
+              if (tc.function.name === "consult_agent") {
+                const reply = await consultAgent(String(args.agentId), String(args.question), githubToken, _depth);
+                toolResult = { reply };
+                githubActions.push(`👥 ${args.agentId}: ${reply.slice(0, 120)}`);
+              } else {
+                toolResult = await runGithubTool(tc.function.name, args, githubToken);
+                githubActions.push(`${tc.function.name}: ${JSON.stringify(toolResult).slice(0, 150)}`);
+              }
+              groqMessages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(toolResult) });
             }
           }
-          const choice = groqRes.choices[0];
-          const msg = choice.message;
-          groqMessages.push(msg as Groq.Chat.ChatCompletionMessageParam);
-
-          if (!msg.tool_calls || msg.tool_calls.length === 0) {
-            text = msg.content || "Нет ответа";
-            break;
-          }
-
-          // Execute each tool call
-          for (const tc of msg.tool_calls) {
-            const args = JSON.parse(tc.function.arguments || "{}");
-            let toolResult: object;
-            if (tc.function.name === "consult_agent") {
-              const reply = await consultAgent(String(args.agentId), String(args.question), githubToken, _depth);
-              toolResult = { reply };
-              githubActions.push(`👥 ${args.agentId}: ${reply.slice(0, 120)}`);
-            } else {
-              toolResult = await runGithubTool(tc.function.name, args, githubToken);
-              githubActions.push(`${tc.function.name}: ${JSON.stringify(toolResult).slice(0, 150)}`);
-            }
-            groqMessages.push({
-              role: "tool",
-              tool_call_id: tc.id,
-              content: JSON.stringify(toolResult),
-            });
-          }
+          usedProvider = entry.id;
+          break;
         }
-      } else {
-        throw geminiErr;
+      } catch (err) {
+        const errMsg = String(err);
+        lastError = errMsg;
+        if (isRateError(errMsg) || isToolError(errMsg)) {
+          markCooled(entry.id, errMsg);
+          continue; // try next model
+        }
+        throw err; // unexpected error — bubble up
       }
     }
 
-    // Append bot reply (user message already saved before model call)
+    if (!text) {
+      return NextResponse.json({ error: lastError || "Все модели исчерпаны" }, { status: 429 });
+    }
+
     const botMsg: ChatMsg = { role: "model", text, ...(githubActions.length ? { githubActions } : {}) };
     await saveHistory(agentId, [...compressedHistory, userMsg, botMsg]);
 
@@ -439,7 +316,7 @@ export async function POST(req: NextRequest) {
       text,
       agentName: agent.name,
       githubActions: githubActions.length ? githubActions : undefined,
-      ...(usedGroq ? { provider: "groq" } : {}),
+      provider: usedProvider,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
