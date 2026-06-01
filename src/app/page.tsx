@@ -17,7 +17,7 @@ type AState = "idle" | "type" | "walk" | "talk";
 
 const CHAR_W = 16, CHAR_H = 32;
 const SPRITE_URLS = [0,1,2,3,4,5].map(
-  i => `https://raw.githubusercontent.com/pablodelucca/pixel-agents/main/webview-ui/public/assets/characters/char_${i}.png`
+  i => `/characters/char_${i}.png`
 );
 
 const SEATS = [
@@ -412,7 +412,7 @@ export default function Home(){
   useEffect(()=>{
     spritesRef.current=SPRITE_URLS.map(()=>null);
     SPRITE_URLS.forEach((url,i)=>{
-      const img=new Image();img.crossOrigin="anonymous";
+      const img=new Image();
       img.onload=()=>{spritesRef.current[i]=img;};
       img.onerror=()=>{spritesRef.current[i]=null;};
       img.src=url;
