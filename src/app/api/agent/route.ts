@@ -210,7 +210,24 @@ export async function POST(req: NextRequest) {
       })),
     });
 
-    let result = await chat.sendMessage(message);
+    // Auto-retry on rate limit (429) — wait the time Gemini specifies, then retry
+    async function sendWithRetry(payload: Parameters<typeof chat.sendMessage>[0], maxWaitMs = 50_000) {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          return await chat.sendMessage(payload);
+        } catch (err) {
+          const msg = String(err);
+          const match = msg.match(/retry in ([\d.]+)s/i);
+          const waitMs = match ? Math.ceil(parseFloat(match[1]) * 1000) : 15_000;
+          if (attempt < 2 && waitMs <= maxWaitMs) {
+            await new Promise(r => setTimeout(r, waitMs));
+          } else throw err;
+        }
+      }
+      throw new Error("Max retries exceeded");
+    }
+
+    let result = await sendWithRetry(message);
     const githubActions: string[] = [];
 
     for (let i = 0; i < 6 && hasGithub; i++) {
@@ -227,7 +244,7 @@ export async function POST(req: NextRequest) {
           return { functionResponse: { name: fc.name, response: toolResult } };
         })
       );
-      result = await chat.sendMessage(responses as Parameters<typeof chat.sendMessage>[0]);
+      result = await sendWithRetry(responses as Parameters<typeof chat.sendMessage>[0]);
     }
 
     const text = result.response.text();
@@ -242,6 +259,8 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("Agent error:", msg);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    const retryMatch = msg.match(/retry in ([\d.]+)s/i);
+    const retryAfter = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) : null;
+    return NextResponse.json({ error: msg, retryAfter }, { status: retryAfter ? 429 : 500 });
   }
 }
