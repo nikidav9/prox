@@ -242,7 +242,7 @@ function drawScene(ctx:CanvasRenderingContext2D,agents:AgentRT[],sprites:(HTMLIm
 function drawChar(ctx:CanvasRenderingContext2D,sprites:(HTMLImageElement|null)[],ag:AgentRT,sx:number,sy:number,fc:number){
   const sprite=sprites[ag.si];
   if(sprite&&sprite.complete&&sprite.naturalWidth>0){
-    const row=ag.dir,col=ag.state==="type"?4+ag.animF%2:ag.state==="walk"?ag.animF%4:0;
+    const row=ag.dir===UP?DOWN:ag.dir,col=ag.state==="type"?4+ag.animF%2:ag.state==="walk"?ag.animF%4:0;
     ctx.drawImage(sprite,col*CHAR_W,row*CHAR_H,CHAR_W,CHAR_H,sx-CHAR_W*SCALE/2,sy-CHAR_H*SCALE,CHAR_W*SCALE,CHAR_H*SCALE);
   }else drawFallback(ctx,ag,sx,sy,fc);
 }
