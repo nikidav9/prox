@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
     for (const agentId of TEAM_AGENTS) {
       const agent = AGENTS.find(a => a.id === agentId)!;
       const model = genAI.getGenerativeModel({
-        model: "gemini-2.5-flash-lite",
+        model: "gemini-2.0-flash",
         systemInstruction: agent.soul + "\n\nТы участвуешь в командном обсуждении. Говори только на русском, кратко (2-4 предложения), без кода. Выражай своё мнение по теме с позиции своей роли. Обращайся к коллегам по имени если нужно.",
       });
 
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
     // Architect summarizes
     const architect = AGENTS.find(a => a.id === "architect")!;
     const archModel = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash-lite",
+      model: "gemini-2.0-flash",
       systemInstruction: architect.soul + "\n\nГовори только на русском, без кода. Подведи итог обсуждения как архитектор.",
     });
     const archPrompt = `Тема: ${topic}\n\nОбсуждение команды:\n${messages.map(m => `${m.agentName}: ${m.text}`).join("\n")}\n\nПодведи итог и предложи план действий (3-5 предложений):`;
