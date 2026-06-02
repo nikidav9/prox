@@ -726,20 +726,35 @@ export default function Home(){
         if(!res.ok)return;
         const data=await res.json();
         if(data&&typeof data==='object'){
+          const toAutoDispatch: {id:string; msg:string; hist:ChatMsg[]}[]=[];
           setChatHistories(prev=>{
             const merged={...prev};
             for(const [id,msgs] of Object.entries(data) as [string,ChatMsg[]][]){
               const localLen=(prev[id]||[]).length;
-              if(!sendingRef.current.has(id) && msgs.length >= localLen) merged[id]=msgs;
+              if(!sendingRef.current.has(id) && msgs.length >= localLen){
+                merged[id]=msgs;
+                // If the chat now ends with a user message that wasn't there before,
+                // and no one is sending for this agent — auto-dispatch it
+                const last=msgs[msgs.length-1];
+                const prevLast=(prev[id]||[])[localLen-1];
+                if(last?.role==="user" && prevLast?.role!=="user" && !sendingRef.current.has(id)){
+                  toAutoDispatch.push({id, msg:last.text, hist:msgs.slice(0,-1)});
+                }
+              }
             }
             return merged;
+          });
+          // Dispatch outside setState to avoid closure issues
+          toAutoDispatch.forEach(({id,msg,hist},i)=>{
+            setTimeout(()=>dispatchTask(id,msg,hist), i*600);
           });
         }
       }catch{}
     }
     fetchHistories();
-    const iv=setInterval(fetchHistories,30_000);
+    const iv=setInterval(fetchHistories,10_000);
     return()=>clearInterval(iv);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
 
   useEffect(() => {
