@@ -206,10 +206,16 @@ export async function POST(req: NextRequest) {
     const hasGithub = !!githubToken;
 
     const agentList = AGENTS.map(a => `${a.id} — ${a.name} (${a.role})`).join("\n");
+    const sharedRepo = process.env.SHARED_GITHUB_REPO || "";
+    const githubInstruction = hasGithub
+      ? (sharedRepo
+        ? `\n\nGITHUB: у команды ОДИН общий репозиторий — ${sharedRepo}. НИКОГДА не создавай новые репозитории (github_create_repo запрещён). Все файлы пиши только в ${sharedRepo} через github_create_or_update_file. owner — первая часть до "/", repo — вторая.`
+        : "\n\nGITHUB: у команды ОДИН общий репозиторий. Не создавай новые репо — спроси у PM (pm/Lena) название общего репо через [TASK:pm:Какой общий репозиторий использовать?] если не знаешь. Работай только в одном репо.")
+      : "";
     const systemInstruction = agent.soul
       + "\n\nПРАВИЛА ОТВЕТА (СТРОГО): пиши максимум 1-2 предложения. Никаких вступлений, никаких 'конечно', никаких списков. Только суть."
       + `\n\nДЕЛЕГИРОВАНИЕ ЗАДАЧ: если нужно поставить задачу коллеге, добавь маркер в конце ответа:\n[TASK:agentId:краткое описание задачи]\nПример: [TASK:frontend:Сделать форму регистрации]\nМожно несколько маркеров подряд. Список агентов:\n${agentList}`
-      + (hasGithub ? "\n\nУ тебя есть доступ к GitHub через инструменты. Делай сразу, сначала вызывай github_get_user." : "");
+      + githubInstruction;
 
     const stored: ChatMsg[] = await loadHistory(agentId);
     const fullHistory: ChatMsg[] = stored.length > 0 ? stored : (history || []);
