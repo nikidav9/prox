@@ -13,30 +13,19 @@ type Provider = "gemini" | "groq" | "openrouter";
 interface ModelEntry { id: string; provider: Provider; model: string }
 
 const MODEL_POOL: ModelEntry[] = [
-  // Gemini
+  // OpenRouter first — reliable free tier, good tool-call support
+  { id: "or-gpt-oss-120b",         provider: "openrouter", model: "openai/gpt-oss-120b:free" },
+  { id: "or-llama33-70b",          provider: "openrouter", model: "meta-llama/llama-3.3-70b-instruct:free" },
+  { id: "or-gemma4-31b",           provider: "openrouter", model: "google/gemma-4-31b-it:free" },
+  { id: "or-nemotron-120b",        provider: "openrouter", model: "nvidia/nemotron-3-super-120b-a12b:free" },
+  { id: "or-hermes-405b",          provider: "openrouter", model: "nousresearch/hermes-3-llama-3.1-405b:free" },
+  // Groq — fast when quota available
+  { id: "groq-llama33-70b",        provider: "groq",   model: "llama-3.3-70b-versatile" },
+  { id: "groq-llama3-70b",         provider: "groq",   model: "llama3-70b-8192" },
+  { id: "groq-mixtral-8x7b",       provider: "groq",   model: "mixtral-8x7b-32768" },
+  // Gemini last — quota exhausts quickly
   { id: "gemini-2.0-flash",        provider: "gemini", model: "gemini-2.0-flash" },
   { id: "gemini-2.5-flash",        provider: "gemini", model: "gemini-2.5-flash-preview-05-20" },
-  { id: "gemini-1.5-flash",        provider: "gemini", model: "gemini-1.5-flash" },
-  { id: "gemini-1.5-pro",          provider: "gemini", model: "gemini-1.5-pro" },
-  // Groq
-  { id: "groq-llama33-70b",        provider: "groq",   model: "llama-3.3-70b-versatile" },
-  { id: "groq-llama31-70b",        provider: "groq",   model: "llama-3.1-70b-versatile" },
-  { id: "groq-llama3-70b",         provider: "groq",   model: "llama3-70b-8192" },
-  { id: "groq-deepseek-70b",       provider: "groq",   model: "deepseek-r1-distill-llama-70b" },
-  { id: "groq-deepseek-qwen32b",   provider: "groq",   model: "deepseek-r1-distill-qwen-32b" },
-  { id: "groq-qwen-32b",           provider: "groq",   model: "qwen-qwq-32b" },
-  { id: "groq-mixtral-8x7b",       provider: "groq",   model: "mixtral-8x7b-32768" },
-  { id: "groq-gemma2-9b",          provider: "groq",   model: "gemma2-9b-it" },
-  // Small models omitted — poor tool-call compliance
-  // OpenRouter (бесплатные модели — актуальный список)
-  { id: "or-gpt-oss-120b",         provider: "openrouter", model: "openai/gpt-oss-120b:free" },
-  { id: "or-gemma4-31b",           provider: "openrouter", model: "google/gemma-4-31b-it:free" },
-  { id: "or-gemma4-26b",           provider: "openrouter", model: "google/gemma-4-26b-a4b-it:free" },
-  { id: "or-nemotron-120b",        provider: "openrouter", model: "nvidia/nemotron-3-super-120b-a12b:free" },
-  { id: "or-nemotron-30b",         provider: "openrouter", model: "nvidia/nemotron-3-nano-30b-a3b:free" },
-  { id: "or-llama33-70b",          provider: "openrouter", model: "meta-llama/llama-3.3-70b-instruct:free" },
-  { id: "or-hermes-405b",          provider: "openrouter", model: "nousresearch/hermes-3-llama-3.1-405b:free" },
-  { id: "or-lfm-instruct",         provider: "openrouter", model: "liquid/lfm-2.5-1.2b-instruct:free" },
 ];
 
 const cooldowns = new Map<string, number>();
@@ -53,7 +42,13 @@ function markCooled(id: string, msg: string) {
     ? Math.ceil(parseFloat(secMatch[1]) * 1000)
     : minMatch ? parseInt(minMatch[1]) * 60_000
     : 60_000;
-  cooldowns.set(id, Date.now() + Math.min(waitMs + 5000, 24 * 3600_000));
+  const until = Date.now() + Math.min(waitMs + 5000, 24 * 3600_000);
+  cooldowns.set(id, until);
+  // If any Gemini model fails (quota/timeout), cool all Gemini models together
+  const entry = MODEL_POOL.find(m => m.id === id);
+  if (entry?.provider === "gemini") {
+    MODEL_POOL.filter(m => m.provider === "gemini").forEach(m => cooldowns.set(m.id, until));
+  }
 }
 
 const KEEP_RECENT = 4;
@@ -212,8 +207,9 @@ export async function POST(req: NextRequest) {
 
     const agentList = AGENTS.map(a => `${a.id} — ${a.name} (${a.role})`).join("\n");
     const systemInstruction = agent.soul
-      + (hasGithub ? "\n\nУ тебя есть доступ к GitHub через инструменты. Делай сразу, сначала вызывай github_get_user." : "")
-      + `\n\nТЫ МОЖЕШЬ КОНСУЛЬТИРОВАТЬСЯ С КОЛЛЕГАМИ через consult_agent.\nСписок агентов:\n${agentList}`;
+      + "\n\nПРАВИЛА ОТВЕТА: отвечай КРАТКО (2-4 предложения). Без таблиц, без длинных списков."
+      + `\n\nДЕЛЕГИРОВАНИЕ ЗАДАЧ: если нужно поставить задачу коллеге, добавь маркер в конце ответа:\n[TASK:agentId:краткое описание задачи]\nПример: [TASK:frontend:Сделать форму регистрации]\nМожно несколько маркеров подряд. Список агентов:\n${agentList}`
+      + (hasGithub ? "\n\nУ тебя есть доступ к GitHub через инструменты. Делай сразу, сначала вызывай github_get_user." : "");
 
     const stored: ChatMsg[] = await loadHistory(agentId);
     const fullHistory: ChatMsg[] = stored.length > 0 ? stored : (history || []);
@@ -239,7 +235,7 @@ export async function POST(req: NextRequest) {
     }
 
     for (const entry of availableModels()) {
-      const modelTimeout = entry.provider === "gemini" ? 18_000 : entry.provider === "openrouter" ? 25_000 : 12_000;
+      const modelTimeout = entry.provider === "gemini" ? 10_000 : entry.provider === "openrouter" ? 20_000 : 8_000;
       try {
         if (entry.provider === "gemini") {
           const gModel = genAI.getGenerativeModel({
@@ -293,7 +289,7 @@ export async function POST(req: NextRequest) {
           for (let round = 0; round < 6; round++) {
             const groqRes = await withTimeout(groq.chat.completions.create({
               model: entry.model, messages: groqMessages,
-              max_tokens: 1024, tools: groqTools, tool_choice: "auto",
+              max_tokens: 600, tools: groqTools, tool_choice: "auto",
             }), modelTimeout);
             const choice = groqRes.choices[0];
             const msg = choice.message;
@@ -335,7 +331,7 @@ export async function POST(req: NextRequest) {
                 "HTTP-Referer": "https://gemini-agents-mocha.vercel.app",
                 "X-Title": "Dev Office",
               },
-              body: JSON.stringify({ model: entry.model, messages: orMessages, max_tokens: 1024, tools: orTools, tool_choice: "auto" }),
+              body: JSON.stringify({ model: entry.model, messages: orMessages, max_tokens: 600, tools: orTools, tool_choice: "auto" }),
             }), modelTimeout);
             const orData = await orRes.json() as {
               choices?: { message: { content: string | null; tool_calls?: { id: string; function: { name: string; arguments: string } }[] } }[];
@@ -401,6 +397,13 @@ export async function POST(req: NextRequest) {
     while ((m = re2.exec(text)) !== null) {
       try { const o = JSON.parse(m[1]); if (o.agentId && o.question) addCall(String(o.agentId), String(o.question)); } catch {}
     }
+    // Parse [TASK:agentId:description] markers (explicit delegation format, no tool calls needed)
+    const taskMarkerRe = /\[TASK:([\w-]+):([^\]]+)\]/g;
+    let tm: RegExpExecArray | null;
+    while ((tm = taskMarkerRe.exec(text)) !== null) {
+      addCall(tm[1], tm[2].trim());
+    }
+
     if (inlineCalls.length > 0) {
       // Save tasks directly to agents' Supabase histories as user messages.
       // The frontend auto-resumes chats that end with a user message, so the agents will respond naturally.
@@ -409,8 +412,9 @@ export async function POST(req: NextRequest) {
         await saveHistory(tId, [...existing, { role: "user", text: question }]);
         githubActions.push(`👥 ${tId}: ${question.slice(0, 100)}`);
       }));
-      // Strip all consult_agent call syntax from displayed text
+      // Strip all agent-call syntax from displayed text
       text = text
+        .replace(/\[TASK:[\w-]+:[^\]]+\]\s*/g, "")
         .replace(/consult_agent\s*\([^)]*\)\s*/g, "")
         .replace(/(?:function=consult_agent|<function=consult_agent)[^\n]*(?:\n|$)/g, "")
         .replace(/<\/function>\s*/g, "")
