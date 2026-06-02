@@ -21,19 +21,16 @@ const SPRITE_URLS = [0,1,2,3,4,5].map(
 );
 
 const SEATS = [
-  // Top row — desk above at ty=2, agents face viewer (DOWN)
   {tx:2, ty:3, dir:DOWN as Dir},
   {tx:5, ty:3, dir:DOWN as Dir},
   {tx:8, ty:3, dir:DOWN as Dir},
   {tx:11,ty:3, dir:DOWN as Dir},
   {tx:14,ty:3, dir:DOWN as Dir},
-  // Middle row — desk above at ty=5, agents face viewer (DOWN)
   {tx:2, ty:6, dir:DOWN as Dir},
   {tx:5, ty:6, dir:DOWN as Dir},
   {tx:8, ty:6, dir:DOWN as Dir},
   {tx:11,ty:6, dir:DOWN as Dir},
   {tx:14,ty:6, dir:DOWN as Dir},
-  // Bottom row — desk below at ty=10, agents face viewer (DOWN)
   {tx:2, ty:9, dir:DOWN as Dir},
   {tx:5, ty:9, dir:DOWN as Dir},
   {tx:8, ty:9, dir:DOWN as Dir},
@@ -965,7 +962,7 @@ export default function Home(){
         <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",padding:4}}>
           <canvas ref={canvasRef} width={W} height={H} onClick={handleCanvasClick}
             style={{maxWidth:"100%",maxHeight:"100%",imageRendering:"pixelated",cursor:"crosshair",
-              border:"3px solid #3a3010",boxShadow:"0 0 20px rgba(0,0,0,0.5);"}}/>
+              border:"3px solid #3a3010",boxShadow:"0 0 20px rgba(0,0,0,0.5)"}}/>
         </div>
         {showTeamChat&&(
           <div style={{width:340,display:"flex",flexDirection:"column",background:"#120a1e",borderLeft:"3px solid #5a3a8a",flexShrink:0}}>
