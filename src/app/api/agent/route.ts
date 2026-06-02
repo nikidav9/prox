@@ -32,15 +32,15 @@ const MODEL_POOL: ModelEntry[] = [
   { id: "groq-llama3-8b",          provider: "groq",   model: "llama3-8b-8192" },
   { id: "groq-llama32-3b",         provider: "groq",   model: "llama-3.2-3b-preview" },
   { id: "groq-llama32-1b",         provider: "groq",   model: "llama-3.2-1b-preview" },
-  // OpenRouter (бесплатные модели)
+  // OpenRouter (бесплатные модели — актуальный список)
+  { id: "or-gpt-oss-120b",         provider: "openrouter", model: "openai/gpt-oss-120b:free" },
+  { id: "or-gemma4-31b",           provider: "openrouter", model: "google/gemma-4-31b-it:free" },
+  { id: "or-gemma4-26b",           provider: "openrouter", model: "google/gemma-4-26b-a4b-it:free" },
+  { id: "or-nemotron-120b",        provider: "openrouter", model: "nvidia/nemotron-3-super-120b-a12b:free" },
+  { id: "or-nemotron-30b",         provider: "openrouter", model: "nvidia/nemotron-3-nano-30b-a3b:free" },
   { id: "or-llama33-70b",          provider: "openrouter", model: "meta-llama/llama-3.3-70b-instruct:free" },
-  { id: "or-deepseek-r1",          provider: "openrouter", model: "deepseek/deepseek-r1:free" },
-  { id: "or-deepseek-v3",          provider: "openrouter", model: "deepseek/deepseek-chat-v3-0324:free" },
-  { id: "or-qwen25-72b",           provider: "openrouter", model: "qwen/qwen-2.5-72b-instruct:free" },
-  { id: "or-mistral-7b",           provider: "openrouter", model: "mistralai/mistral-7b-instruct:free" },
-  { id: "or-gemma2-9b",            provider: "openrouter", model: "google/gemma-2-9b-it:free" },
-  { id: "or-phi4",                 provider: "openrouter", model: "microsoft/phi-4:free" },
-  { id: "or-llama32-11b",          provider: "openrouter", model: "meta-llama/llama-3.2-11b-vision-instruct:free" },
+  { id: "or-hermes-405b",          provider: "openrouter", model: "nousresearch/hermes-3-llama-3.1-405b:free" },
+  { id: "or-lfm-instruct",         provider: "openrouter", model: "liquid/lfm-2.5-1.2b-instruct:free" },
 ];
 
 const cooldowns = new Map<string, number>();
@@ -181,7 +181,7 @@ async function consultAgent(targetId: string, question: string, githubToken: str
 export async function GET() {
   const now = Date.now();
   return NextResponse.json({
-    version: 10,
+    version: 11,
     pool: MODEL_POOL.map(m => ({
       id: m.id, model: m.model,
       available: (cooldowns.get(m.id) ?? 0) <= now,
