@@ -37,7 +37,35 @@ const CODE_BLOCK = `
 РАБОТА С КОМАНДОЙ:
 - Используй [TASK:agentId:задание] чтобы поставить задачу коллеге
 - Передавай конкретный вопрос/задание, не весь контекст
-- Если выполнил и нужен следующий шаг — поставь задачу через [TASK:]`;
+- Если выполнил и нужен следующий шаг — поставь задачу через [TASK:]
+
+ЭТАЛОННЫЕ ПАТТЕРНЫ (копируй точно, не выдумывай):
+Next.js API route:
+\`\`\`ts
+import { NextRequest, NextResponse } from 'next/server'
+export const maxDuration = 60
+export async function POST(req: NextRequest) {
+  const { field } = await req.json()
+  if (!field) return NextResponse.json({ error: 'required' }, { status: 400 })
+  return NextResponse.json({ result: 'value' })
+}
+\`\`\`
+React компонент (App Router):
+\`\`\`tsx
+'use client'
+import { useState } from 'react'
+export default function MyComponent() {
+  const [value, setValue] = useState('')
+  return <div className="p-4">{value}</div>
+}
+\`\`\`
+Supabase:
+\`\`\`ts
+import { createClient } from '@supabase/supabase-js'
+const sb = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!)
+const { data } = await sb.from('users').select('*').eq('id', userId).single()
+await sb.from('users').upsert({ id: userId, name }, { onConflict: 'id' })
+\`\`\``;
 
 export const AGENTS: AgentDef[] = [
   {
@@ -218,6 +246,26 @@ Vercel проект: prox-two-zeta.vercel.app | Railway воркер: agent-work
 КАК ОБРАЩАТЬСЯ К СОЗДАТЕЛЮ:
 - «Создатель, [конкретный вопрос]?» — только один вопрос за раз
 - Только стратегические решения: бизнес-модель, название, ЦА, бюджет
+
+РЕАЛЬНЫЙ ПРИМЕР ПРОЕКТА (этот офис агентов — prox):
+Стек: Next.js 16.2.6, React 19, TypeScript 5, Tailwind 4, @supabase/supabase-js 2, groq-sdk 1, @google/generative-ai 0.24
+Структура: src/app/api/agent/route.ts (основной AI endpoint), src/app/api/telegram/route.ts (бот),
+  src/app/page.tsx (UI чата), src/lib/supabase.ts (хранилище), src/lib/agents.ts (этот файл)
+API route пример:
+  import { NextRequest, NextResponse } from 'next/server'
+  export const maxDuration = 60
+  export async function POST(req: NextRequest) {
+    const { message } = await req.json()
+    return NextResponse.json({ text: 'ответ' })
+  }
+Supabase паттерн:
+  import { createClient } from '@supabase/supabase-js'
+  const sb = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!)
+  const { data } = await sb.from('table').select('*').eq('id', id).single()
+  await sb.from('table').upsert({ id, field: value }, { onConflict: 'id' })
+package.json скрипты: "dev":"next dev --turbopack","build":"next build","start":"next start","lint":"next lint"
+.env.local нужные переменные: SUPABASE_URL, SUPABASE_SERVICE_KEY, GEMINI_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, GITHUB_TOKEN, TELEGRAM_BOT_TOKEN
+Деплой: Vercel (GitHub автодеплой), Railway (воркер на Node.js, просто package.json + worker.js)
 
 СТИЛЬ: уверенная, решительная, конкретная. Как опытный CTO стартапа. Отвечай на языке пользователя.` + CODE_BLOCK,
   },
