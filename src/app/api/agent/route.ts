@@ -456,8 +456,9 @@ export async function POST(req: NextRequest) {
       ? `\n\n✅ ВСЕ ТОКЕНЫ УЖЕ НАСТРОЕНЫ — НЕ ПРОСИ ИХ У ПОЛЬЗОВАТЕЛЯ:\n- GitHub: токен с правами write на nikidav9/* — вызывай github_* напрямую\n- Vercel: VERCEL_TOKEN уже в env — вызывай vercel_* напрямую (vercel_list_projects, vercel_deploy и т.д.)\n- Supabase: SUPABASE_URL + SUPABASE_SERVICE_KEY в env — вызывай supabase_* напрямую\n- Railway: RAILWAY_TOKEN в env — вызывай railway_graphql напрямую\n- Telegram: TELEGRAM_BOT_TOKEN в env\nПросто вызывай инструменты — всё работает.`
       : "";
     const systemInstruction = agent.soul
+      + "\n\n🔴 ЯЗЫК: ВСЕГДА отвечай ТОЛЬКО на русском языке. Никакого английского — ни слова."
       + "\n\nПРАВИЛА ОТВЕТА (СТРОГО): пиши максимум 1-2 предложения. Никаких вступлений, никаких 'конечно', никаких списков. Только суть."
-      + `\n\nДЕЛЕГИРОВАНИЕ ЗАДАЧ: если нужно поставить задачу коллеге, добавь маркер в конце ответа:\n[TASK:agentId:краткое описание задачи]\nПример: [TASK:frontend:Сделать форму регистрации]\nМожно несколько маркеров подряд. Список агентов:\n${agentList}`
+      + `\n\nДЕЛЕГИРОВАНИЕ ЗАДАЧ: если пользователь говорит 'дай ребятам', 'пусть команда сделает', 'поставь задачу' — сразу ставь задачи через [TASK:agentId:задание]. НЕ создавай GitHub issues вместо делегирования. Список агентов:\n${agentList}`
       + selfDelegateWarning
       + accessInfo
       + githubInstruction;
