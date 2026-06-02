@@ -234,8 +234,90 @@ export async function POST(req: NextRequest) {
       ]);
     }
 
-    for (const entry of availableModels()) {
-      const modelTimeout = entry.provider === "gemini" ? 10_000 : entry.provider === "openrouter" ? 20_000 : 8_000;
+    // Race the first 3 available OpenRouter models in parallel — fastest wins
+    const orPool = availableModels().filter(e => e.provider === "openrouter").slice(0, 3);
+    if (orPool.length > 0 && process.env.OPENROUTER_API_KEY) {
+      const orMessages = [
+        { role: "system", content: systemInstruction },
+        ...groqHistory,
+        { role: "user", content: message },
+      ];
+      const orTools = buildGroqTools(hasGithub);
+      const raceResult = await Promise.any(orPool.map(async (entry) => {
+        const controller = new AbortController();
+        const tid = setTimeout(() => controller.abort(), 25_000);
+        try {
+          const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+              "Content-Type": "application/json",
+              "HTTP-Referer": "https://prox-two-zeta.vercel.app",
+              "X-Title": "Dev Office",
+            },
+            body: JSON.stringify({ model: entry.model, messages: orMessages, max_tokens: 600, tools: orTools, tool_choice: "auto" }),
+            signal: controller.signal,
+          });
+          clearTimeout(tid);
+          const data = await res.json() as { choices?: { message: { content: string | null; tool_calls?: { id: string; function: { name: string; arguments: string } }[] } }[]; error?: { message: string } };
+          if (data.error) throw new Error(data.error.message);
+          const msg = data.choices?.[0]?.message;
+          if (!msg) throw new Error("Empty");
+          return { msg, entry, orMessages: [...orMessages] };
+        } finally {
+          clearTimeout(tid);
+        }
+      })).catch(() => null);
+
+      if (raceResult) {
+        const { msg, entry } = raceResult;
+        let curMessages = [...orMessages];
+        let curMsg = msg;
+        // Process tool calls in follow-up rounds
+        for (let round = 0; round < 5 && curMsg.tool_calls?.length; round++) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          curMessages.push({ role: "assistant", content: curMsg.content ?? "", ...(curMsg.tool_calls ? { tool_calls: curMsg.tool_calls } : {}) } as any);
+          for (const tc of curMsg.tool_calls) {
+            const args = JSON.parse(tc.function.arguments || "{}");
+            let toolResult: object;
+            if (tc.function.name === "consult_agent") {
+              const reply = await consultAgent(String(args.agentId), String(args.question), githubToken, _depth);
+              toolResult = { reply };
+              githubActions.push(`👥 ${args.agentId}: ${reply.slice(0, 120)}`);
+            } else {
+              toolResult = await runGithubTool(tc.function.name, args, githubToken);
+              githubActions.push(`${tc.function.name}: ${JSON.stringify(toolResult).slice(0, 150)}`);
+            }
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            curMessages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(toolResult), name: tc.function.name } as any);
+          }
+          const controller2 = new AbortController();
+          const tid2 = setTimeout(() => controller2.abort(), 20_000);
+          try {
+            const res2 = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+              method: "POST",
+              headers: { "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`, "Content-Type": "application/json", "HTTP-Referer": "https://prox-two-zeta.vercel.app", "X-Title": "Dev Office" },
+              body: JSON.stringify({ model: entry.model, messages: curMessages, max_tokens: 600, tools: orTools, tool_choice: "auto" }),
+              signal: controller2.signal,
+            });
+            clearTimeout(tid2);
+            const d2 = await res2.json() as { choices?: { message: { content: string | null; tool_calls?: { id: string; function: { name: string; arguments: string } }[] } }[]; error?: { message: string } };
+            if (d2.error) break;
+            curMsg = d2.choices?.[0]?.message ?? { content: "", tool_calls: [] };
+          } catch { clearTimeout(tid2); break; }
+        }
+        text = curMsg.content || "";
+        usedProvider = entry.id;
+      } else {
+        // All OR models failed — mark them cooled
+        orPool.forEach(e => markCooled(e.id, "race failed"));
+      }
+    }
+
+    // Fallback: sequential Groq / Gemini if OR race didn't produce text
+    const fallbackPool = text ? [] : availableModels().filter(e => e.provider !== "openrouter");
+    for (const entry of fallbackPool) {
+      const modelTimeout = entry.provider === "gemini" ? 10_000 : 8_000;
       try {
         if (entry.provider === "gemini") {
           const gModel = genAI.getGenerativeModel({
@@ -310,54 +392,6 @@ export async function POST(req: NextRequest) {
                 githubActions.push(`${tc.function.name}: ${JSON.stringify(toolResult).slice(0, 150)}`);
               }
               groqMessages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(toolResult) });
-            }
-          }
-          usedProvider = entry.id;
-          break;
-        } else if (entry.provider === "openrouter" && process.env.OPENROUTER_API_KEY) {
-          const orMessages: { role: string; content: string; tool_call_id?: string; name?: string }[] = [
-            { role: "system", content: systemInstruction },
-            ...groqHistory,
-            { role: "user", content: message },
-          ];
-          const orTools = buildGroqTools(hasGithub);
-
-          for (let round = 0; round < 6; round++) {
-            const orRes = await withTimeout(fetch("https://openrouter.ai/api/v1/chat/completions", {
-              method: "POST",
-              headers: {
-                "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://gemini-agents-mocha.vercel.app",
-                "X-Title": "Dev Office",
-              },
-              body: JSON.stringify({ model: entry.model, messages: orMessages, max_tokens: 600, tools: orTools, tool_choice: "auto" }),
-            }), modelTimeout);
-            const orData = await orRes.json() as {
-              choices?: { message: { content: string | null; tool_calls?: { id: string; function: { name: string; arguments: string } }[] } }[];
-              error?: { message: string };
-            };
-            if (orData.error) throw new Error(orData.error.message);
-            const orMsg = orData.choices?.[0]?.message;
-            if (!orMsg) throw new Error("Empty response from OpenRouter");
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            orMessages.push({ role: "assistant", content: orMsg.content ?? "", ...(orMsg.tool_calls ? { tool_calls: orMsg.tool_calls } : {}) } as any);
-            if (!orMsg.tool_calls || orMsg.tool_calls.length === 0) {
-              text = orMsg.content || "Нет ответа";
-              break;
-            }
-            for (const tc of orMsg.tool_calls) {
-              const args = JSON.parse(tc.function.arguments || "{}");
-              let toolResult: object;
-              if (tc.function.name === "consult_agent") {
-                const reply = await consultAgent(String(args.agentId), String(args.question), githubToken, _depth);
-                toolResult = { reply };
-                githubActions.push(`👥 ${args.agentId}: ${reply.slice(0, 120)}`);
-              } else {
-                toolResult = await runGithubTool(tc.function.name, args, githubToken);
-                githubActions.push(`${tc.function.name}: ${JSON.stringify(toolResult).slice(0, 150)}`);
-              }
-              orMessages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(toolResult), name: tc.function.name });
             }
           }
           usedProvider = entry.id;
