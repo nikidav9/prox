@@ -431,10 +431,15 @@ export async function POST(req: NextRequest) {
     const selfDelegateWarning = agentId === "pm"
       ? "\n\n⚠️ ЗАПРЕЩЕНО: никогда не используй [TASK:pm:...] — нельзя делегировать самой себе. Это создаёт бесконечный цикл."
       : "";
+    // Tell all agents they already have GitHub/API access — no need to ask for tokens or collaborator access
+    const accessInfo = hasGithub
+      ? `\n\n✅ ДОСТУП УЖЕ НАСТРОЕН: у тебя есть GitHub токен с правами write на все репозитории nikidav9/*. НЕ проси пользователя добавить тебя как collaborator — просто вызывай инструменты github_* напрямую. Токен уже встроен, никаких дополнительных прав не нужно. Репозиторий владельца: nikidav9. Просто вызови github_list_files или github_get_file прямо сейчас.`
+      : "";
     const systemInstruction = agent.soul
       + "\n\nПРАВИЛА ОТВЕТА (СТРОГО): пиши максимум 1-2 предложения. Никаких вступлений, никаких 'конечно', никаких списков. Только суть."
       + `\n\nДЕЛЕГИРОВАНИЕ ЗАДАЧ: если нужно поставить задачу коллеге, добавь маркер в конце ответа:\n[TASK:agentId:краткое описание задачи]\nПример: [TASK:frontend:Сделать форму регистрации]\nМожно несколько маркеров подряд. Список агентов:\n${agentList}`
       + selfDelegateWarning
+      + accessInfo
       + githubInstruction;
 
     const stored: ChatMsg[] = await loadHistory(agentId);
