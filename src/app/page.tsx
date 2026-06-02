@@ -303,6 +303,8 @@ interface MobileLayoutProps {
   onSend: (agentId: string, msg: string, history: ChatMsg[]) => Promise<void>;
   setChatHistories: React.Dispatch<React.SetStateAction<Record<string,ChatMsg[]>>>;
   githubToken: string;
+  lastSeen: Record<string,number>;
+  onMarkSeen: (id:string)=>void;
 }
 
 function CodeBlock({ code, lang }: { code: string; lang?: string }) {
@@ -339,7 +341,7 @@ function MessageText({ text }: { text: string }) {
   );
 }
 
-function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setChatHistories, githubToken }: MobileLayoutProps) {
+function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setChatHistories, githubToken, lastSeen, onMarkSeen }: MobileLayoutProps) {
   const [tab, setTab] = useState<"agents"|"team">("agents");
   const [selectedId, setSelectedId] = useState<string|null>(null);
   const [inputText, setInputText] = useState("");
@@ -369,7 +371,9 @@ function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setC
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chatHist]);
+    if (selectedId) onMarkSeen(selectedId);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatHist, selectedId]);
 
   async function sendMessage() {
     if (!inputText.trim() || !selectedId || localSending || (!!selectedId && sendingIds.has(selectedId))) return;
@@ -378,8 +382,14 @@ function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setC
     setLocalSending(true);
     const history = chatHistories[selectedId] || [];
     setChatHistories(p => ({ ...p, [selectedId!]: [...(p[selectedId!] || []), { role: "user", text: msg, ts: Date.now() }] }));
+    onMarkSeen(selectedId);
     await onSend(selectedId, msg, history);
     setLocalSending(false);
+  }
+
+  function openChat(id: string) {
+    setSelectedId(id);
+    onMarkSeen(id);
   }
 
   function clearHistory(agentId: string) {
@@ -544,15 +554,17 @@ function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setC
               const hist = chatHistories[agent.id] || [];
               const lastMsg = hist.filter(m=>m.role!=="system").at(-1);
               const isBusy = sendingIds.has(agent.id);
-              const unread = hist.length > 0;
+              const seenCount = lastSeen[agent.id] || 0;
+              const unreadCount = Math.max(0, hist.length - seenCount);
+              const hasUnread = unreadCount > 0;
               return (
-                <div key={agent.id} onClick={() => setSelectedId(agent.id)}
+                <div key={agent.id} onClick={() => openChat(agent.id)}
                   style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",
                     borderBottom:"1px solid #1a1530",cursor:"pointer",
-                    background:unread?"#13102a":"transparent",
+                    background:hasUnread?"#16122e":"transparent",
                     transition:"background 0.15s"}}
                   onTouchStart={e=>(e.currentTarget.style.background="#1e1a35")}
-                  onTouchEnd={e=>(e.currentTarget.style.background=unread?"#13102a":"transparent")}>
+                  onTouchEnd={e=>(e.currentTarget.style.background=hasUnread?"#16122e":"transparent")}>
                   <div style={{position:"relative",flexShrink:0}}>
                     <div style={{width:46,height:46,borderRadius:"50%",background:agent.shirtColor,
                       display:"flex",alignItems:"center",justifyContent:"center",
@@ -568,17 +580,21 @@ function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setC
                       <span style={{fontWeight:"bold",fontSize:14,color:agent.shirtColor}}>{agent.name}</span>
                       <span style={{fontSize:9,color:"#3a2a5a",flexShrink:0,marginLeft:8}}>{agent.role}</span>
                     </div>
-                    <div style={{fontSize:12,color:"#5a4a7a",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
-                      {isBusy ? <span style={{color:"#22c55e"}}>печатает…</span>
-                        : lastMsg ? <>{lastMsg.role==="user"&&<span style={{color:"#3a2a5a"}}>Вы: </span>}{lastMsg.text.replace(/```[\s\S]*?```/g,"[код]").slice(0,55)}{lastMsg.text.length>55?"…":""}</>
-                        : <span style={{color:"#2a1a3a",fontStyle:"italic"}}>нет сообщений</span>}
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:2}}>
+                      <div style={{fontSize:12,color:"#5a4a7a",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",flex:1}}>
+                        {isBusy ? <span style={{color:"#22c55e"}}>печатает…</span>
+                          : lastMsg ? <><span style={{color: lastMsg.role==="user"?"#3a2a5a":"#7a6a9a"}}>{lastMsg.role==="user"?"Вы: ":""}</span><span style={{fontWeight:hasUnread&&lastMsg.role!=="user"?"bold":"normal",color:hasUnread?"#c4b8f0":"#5a4a7a"}}>{lastMsg.text.replace(/```[\s\S]*?```/g,"[код]").slice(0,50)}{lastMsg.text.length>50?"…":""}</span></>
+                          : <span style={{color:"#2a1a3a",fontStyle:"italic"}}>нет сообщений</span>}
+                      </div>
+                      {lastMsg?.ts && <span style={{fontSize:9,color:"#3a2a5a",marginLeft:6,flexShrink:0}}>{fmtTime(lastMsg.ts)}</span>}
                     </div>
                   </div>
-                  {hist.length > 0 && (
-                    <div style={{background:agent.shirtColor,borderRadius:10,minWidth:20,height:20,
+                  {hasUnread && (
+                    <div style={{background:agent.shirtColor,borderRadius:12,minWidth:22,height:22,
                       display:"flex",alignItems:"center",justifyContent:"center",
-                      fontSize:10,fontWeight:"bold",color:"#fff",padding:"0 5px",flexShrink:0}}>
-                      {hist.length}
+                      fontSize:11,fontWeight:"bold",color:"#fff",padding:"0 6px",flexShrink:0,
+                      boxShadow:`0 0 8px ${agent.shirtColor}88`}}>
+                      {unreadCount}
                     </div>
                   )}
                   <span style={{color:"#2a1a3a",fontSize:14,flexShrink:0}}>›</span>
@@ -713,6 +729,9 @@ export default function Home(){
   const [teamLoading,setTeamLoading]=useState(false);
   const [isMobile,setIsMobile]=useState(false);
   const [sendingIds,setSendingIds]=useState<Set<string>>(new Set());
+  const [lastSeen,setLastSeen]=useState<Record<string,number>>(
+    ()=>loadFromStorage("dev_office_seen",{})
+  );
 
   useEffect(()=>{
     const check=()=>setIsMobile(window.innerWidth<768);
@@ -767,6 +786,7 @@ export default function Home(){
 
   useEffect(()=>{ try{localStorage.setItem("dev_office_history",JSON.stringify(chatHistories));}catch{} },[chatHistories]);
   useEffect(()=>{ try{localStorage.setItem("dev_office_github",githubToken);}catch{} },[githubToken]);
+  useEffect(()=>{ try{localStorage.setItem("dev_office_seen",JSON.stringify(lastSeen));}catch{} },[lastSeen]);
 
   useEffect(()=>{
     spritesRef.current=SPRITE_URLS.map(()=>null);
@@ -943,6 +963,11 @@ export default function Home(){
     await dispatchTask(selectedId,msg,history);
   }
 
+  function markSeen(agentId:string){
+    const hist=chatHistories[agentId]||[];
+    setLastSeen(p=>({...p,[agentId]:hist.length}));
+  }
+
   function handleCanvasClick(e:React.MouseEvent<HTMLCanvasElement>){
     const canvas=canvasRef.current;if(!canvas)return;
     const rect=canvas.getBoundingClientRect();
@@ -952,6 +977,7 @@ export default function Home(){
       const sx=ag.ax*SCALE,sy=ag.ay*SCALE;
       if(mx>=sx-CHAR_W*SCALE/2&&mx<=sx+CHAR_W*SCALE/2&&my>=sy-CHAR_H*SCALE&&my<=sy){found=ag;break;}
     }
+    if(found) markSeen(found.def.id);
     setSelectedId(found?found.def.id:null);
   }
 
@@ -982,7 +1008,7 @@ export default function Home(){
   const totalMsgs=Object.values(chatHistories).reduce((s,h)=>s+h.length,0);
 
   if(isMobile){
-    return <MobileLayout agents={AGENTS} chatHistories={chatHistories} sending={sending} sendingIds={sendingIds} onSend={dispatchTask} setChatHistories={setChatHistories} githubToken={githubToken}/>;
+    return <MobileLayout agents={AGENTS} chatHistories={chatHistories} sending={sending} sendingIds={sendingIds} onSend={dispatchTask} setChatHistories={setChatHistories} githubToken={githubToken} lastSeen={lastSeen} onMarkSeen={id=>{const h=chatHistories[id]||[];setLastSeen(p=>({...p,[id]:h.length}));}}/>;
   }
 
   return(
