@@ -855,11 +855,11 @@ export default function Home(){
       let data:Record<string,unknown>;
       try{data=await res.json();}catch{data={error:`HTTP ${res.status}`};}
       if(res.status===429&&data.retryAfter){
-        await autoRetry(Math.min(data.retryAfter,120));
+        await autoRetry(Math.min(data.retryAfter as number,120));
         return;
       }
       const reply=(data.text as string)||(data.error?`⚠️ Ошибка: ${data.error}`:"⚠️ Нет ответа от агента");
-      const acts:string[]|undefined=data.githubActions;
+      const acts:string[]|undefined=data.githubActions as string[]|undefined;
       const showReply=()=>{
         setChatHistories(p=>{
           const prev=p[agentId]||[];
