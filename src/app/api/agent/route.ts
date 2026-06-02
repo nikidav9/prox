@@ -731,7 +731,7 @@ export async function POST(req: NextRequest) {
     await saveHistory(agentId, [...compressedHistory, userMsg, botMsg]);
 
     // If Lena is addressing the Creator — send to Telegram
-    if (agentId === "pm" && text.includes("Создатель")) {
+    if (agentId === "pm" && text && text !== "Готово.") {
       const chatId = await getTelegramChatId();
       if (chatId) await sendTelegram(chatId, `💬 <b>Лена:</b>\n${text}`);
     }
