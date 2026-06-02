@@ -88,30 +88,8 @@ function markCooled(id: string, msg: string) {
   }
 }
 
-const KEEP_RECENT = 4;
-const COMPRESS_AT = 12;
-
 async function compressHistory(messages: ChatMsg[]): Promise<ChatMsg[]> {
-  if (!groq || messages.length <= COMPRESS_AT) return messages;
-  const toSummarize = messages.slice(0, -KEEP_RECENT);
-  const recent = messages.slice(-KEEP_RECENT);
-  const summaryPrefix = toSummarize[0]?.role === "system" && toSummarize[0].text.startsWith("📋")
-    ? toSummarize[0].text + "\n\n" : "";
-  const dialog = toSummarize.filter(m => m.role !== "system")
-    .map(m => `${m.role === "user" ? "Пользователь" : "Агент"}: ${m.text.slice(0, 400)}`).join("\n");
-  const compressMsg = [{ role: "user" as const, content: `${summaryPrefix}Сделай краткое техническое резюме этого диалога (3-7 пунктов, только факты и решения, без воды):\n\n${dialog}` }];
-  try {
-    let res;
-    for (const m of ["llama-3.1-8b-instant", "gemma2-9b-it", "llama-3.3-70b-versatile"]) {
-      try { res = await groq.chat.completions.create({ model: m, messages: compressMsg, max_tokens: 300 }); break; }
-      catch { /* try next */ }
-    }
-    if (!res) return messages.slice(-COMPRESS_AT);
-    const summary = res.choices[0]?.message?.content || "";
-    return [{ role: "system", text: `📋 Резюме предыдущего диалога:\n${summary}` }, ...recent];
-  } catch {
-    return messages.slice(-COMPRESS_AT);
-  }
+  return messages;
 }
 
 async function githubFetch(token: string, path: string, method = "GET", body?: object) {
