@@ -692,6 +692,7 @@ export default function Home(){
   const lastTRef=useRef<number>(0);
   const resumedRef=useRef(false);
   const sendingRef=useRef<Set<string>>(new Set());
+  const desktopChatEndRef=useRef<HTMLDivElement>(null);
 
   const [selectedId,setSelectedId]=useState<string|null>(null);
   const [chatHistories,setChatHistories]=useState<Record<string,ChatMsg[]>>(
@@ -872,6 +873,30 @@ export default function Home(){
         }
       };
       showReply();
+      // If consult_agent was called, immediately refresh those agents' histories
+      if(acts && acts.length>0){
+        const consultedIds=[...new Set(
+          acts.filter(a=>a.startsWith("👥")).map(a=>a.replace(/^👥\s*/,"").split(":")[0].trim())
+        )];
+        if(consultedIds.length>0){
+          try{
+            const hres=await fetch('/api/history');
+            if(hres.ok){
+              const hdata=await hres.json();
+              if(hdata&&typeof hdata==='object'){
+                setChatHistories(prev=>{
+                  const merged={...prev};
+                  for(const id of consultedIds){
+                    const fresh=hdata[id] as ChatMsg[]|undefined;
+                    if(fresh && fresh.length>(prev[id]||[]).length) merged[id]=fresh;
+                  }
+                  return merged;
+                });
+              }
+            }
+          }catch{}
+        }
+      }
     }catch{
       setChatHistories(p=>({...p,[agentId]:[...(p[agentId]||[]),{role:"model",text:"⚠️ Ошибка соединения, попробуй ещё раз"}]}));
       if(ag){ag.state="idle";ag.busy=false;}
@@ -932,6 +957,11 @@ export default function Home(){
   const selAgent=AGENTS.find(a=>a.id===selectedId);
   const chatHist=selectedId?chatHistories[selectedId]||[]:[];
   const hasGithub=!!githubToken;
+
+  // Scroll to bottom when agent selected or new message arrives
+  useEffect(()=>{
+    desktopChatEndRef.current?.scrollIntoView({ behavior:"instant" });
+  },[chatHist,selectedId]);
   const totalMsgs=Object.values(chatHistories).reduce((s,h)=>s+h.length,0);
 
   if(isMobile){
@@ -1050,6 +1080,7 @@ export default function Home(){
                 </div>
               ))}
             </div>
+            <div ref={desktopChatEndRef}/>
             <div style={{padding:8,borderTop:`2px solid ${selAgent.shirtColor}44`,display:"flex",gap:6}}>
               <input value={inputText} onChange={e=>setInputText(e.target.value)}
                 onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&sendMessage()}
