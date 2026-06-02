@@ -132,6 +132,42 @@ async function runGithubTool(name: string, args: Record<string, unknown>, token:
       case "github_list_issues": return await githubFetch(token, `/repos/${args.owner}/${args.repo}/issues?state=open`);
       case "github_create_issue": return await githubFetch(token, `/repos/${args.owner}/${args.repo}/issues`, "POST", { title: args.title, body: args.body ?? "", labels: args.labels ?? [] });
       case "github_list_files": return await githubFetch(token, `/repos/${args.owner}/${args.repo}/contents/${args.path ?? ""}`);
+      case "github_get_file": {
+        const res = await githubFetch(token, `/repos/${args.owner}/${args.repo}/contents/${args.path}`) as Record<string,unknown>;
+        const content = res.content ? Buffer.from(String(res.content).replace(/\n/g,""), "base64").toString("utf-8") : "";
+        return { ...res, decoded_content: content.slice(0, 4000) };
+      }
+      case "github_delete_file": {
+        const ex = await githubFetch(token, `/repos/${args.owner}/${args.repo}/contents/${args.path}`) as Record<string,unknown>;
+        return await githubFetch(token, `/repos/${args.owner}/${args.repo}/contents/${args.path}`, "DELETE", {
+          message: args.message ?? "Delete file", sha: ex.sha, branch: args.branch ?? "main",
+        });
+      }
+      case "github_create_pull_request": return await githubFetch(token, `/repos/${args.owner}/${args.repo}/pulls`, "POST", {
+        title: args.title, body: args.body ?? "", head: args.head, base: args.base ?? "main",
+      });
+      case "github_close_issue": return await githubFetch(token, `/repos/${args.owner}/${args.repo}/issues/${args.issue_number}`, "PATCH", { state: "closed" });
+      case "github_add_comment": return await githubFetch(token, `/repos/${args.owner}/${args.repo}/issues/${args.issue_number}/comments`, "POST", { body: args.body });
+      case "vercel_deploy": {
+        const vToken = process.env.VERCEL_TOKEN || "";
+        if (!vToken) return { error: "VERCEL_TOKEN not set" };
+        const res = await fetch("https://api.vercel.com/v13/deployments", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${vToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ name: args.project_name ?? "prox", gitSource: { type: "github", repoId: args.repo_id, ref: args.branch ?? "main" } }),
+        });
+        return res.json();
+      }
+      case "railway_deploy": {
+        const rToken = process.env.RAILWAY_TOKEN || "";
+        if (!rToken) return { error: "RAILWAY_TOKEN not set" };
+        const res = await fetch("https://backboard.railway.app/graphql/v2", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${rToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ query: `mutation { serviceInstanceDeploy(serviceId: "${args.service_id}", environmentId: "${args.environment_id}") }` }),
+        });
+        return res.json();
+      }
       default: return { error: `Unknown tool: ${name}` };
     }
   } catch (err) { return { error: String(err) }; }
@@ -154,6 +190,13 @@ function buildGeminiTools(hasGithub: boolean): Tool[] {
       { name: "github_list_files", description: "List files in a repository directory", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, path: { type: "string" } }, required: ["owner", "repo"] } },
       { name: "github_list_issues", description: "List open issues in a repository", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" } }, required: ["owner", "repo"] } },
       { name: "github_create_issue", description: "Create a new GitHub issue", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, title: { type: "string" }, body: { type: "string" } }, required: ["owner", "repo", "title"] } },
+      { name: "github_get_file", description: "Read file content from a repository", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, path: { type: "string" } }, required: ["owner", "repo", "path"] } },
+      { name: "github_delete_file", description: "Delete a file from a repository", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, path: { type: "string" }, message: { type: "string" } }, required: ["owner", "repo", "path"] } },
+      { name: "github_create_pull_request", description: "Create a pull request", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, title: { type: "string" }, body: { type: "string" }, head: { type: "string" }, base: { type: "string" } }, required: ["owner", "repo", "title", "head"] } },
+      { name: "github_close_issue", description: "Close a GitHub issue", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, issue_number: { type: "number" } }, required: ["owner", "repo", "issue_number"] } },
+      { name: "github_add_comment", description: "Add comment to issue or PR", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, issue_number: { type: "number" }, body: { type: "string" } }, required: ["owner", "repo", "issue_number", "body"] } },
+      { name: "vercel_deploy", description: "Trigger a Vercel deployment", parameters: { type: "object", properties: { project_name: { type: "string" }, branch: { type: "string" } }, required: [] } },
+      { name: "railway_deploy", description: "Trigger a Railway deployment", parameters: { type: "object", properties: { service_id: { type: "string" }, environment_id: { type: "string" } }, required: ["service_id", "environment_id"] } },
     );
   }
   return [{ functionDeclarations: allDeclarations }];
@@ -171,6 +214,13 @@ function buildGroqTools(hasGithub: boolean) {
       { type: "function" as const, function: { name: "github_list_files", description: "List files in repo", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, path: { type: "string" } }, required: ["owner", "repo"] } } },
       { type: "function" as const, function: { name: "github_list_issues", description: "List open issues", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" } }, required: ["owner", "repo"] } } },
       { type: "function" as const, function: { name: "github_create_issue", description: "Create an issue", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, title: { type: "string" }, body: { type: "string" } }, required: ["owner", "repo", "title"] } } },
+      { type: "function" as const, function: { name: "github_get_file", description: "Read file content", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, path: { type: "string" } }, required: ["owner", "repo", "path"] } } },
+      { type: "function" as const, function: { name: "github_delete_file", description: "Delete a file", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, path: { type: "string" }, message: { type: "string" } }, required: ["owner", "repo", "path"] } } },
+      { type: "function" as const, function: { name: "github_create_pull_request", description: "Create a pull request", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, title: { type: "string" }, body: { type: "string" }, head: { type: "string" }, base: { type: "string" } }, required: ["owner", "repo", "title", "head"] } } },
+      { type: "function" as const, function: { name: "github_close_issue", description: "Close an issue", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, issue_number: { type: "number" } }, required: ["owner", "repo", "issue_number"] } } },
+      { type: "function" as const, function: { name: "github_add_comment", description: "Add comment to issue/PR", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, issue_number: { type: "number" }, body: { type: "string" } }, required: ["owner", "repo", "issue_number", "body"] } } },
+      { type: "function" as const, function: { name: "vercel_deploy", description: "Trigger Vercel production deployment", parameters: { type: "object", properties: { project_name: { type: "string" }, branch: { type: "string" } } } } },
+      { type: "function" as const, function: { name: "railway_deploy", description: "Trigger Railway deployment", parameters: { type: "object", properties: { service_id: { type: "string" }, environment_id: { type: "string" } }, required: ["service_id", "environment_id"] } } },
     ] : []),
   ];
 }

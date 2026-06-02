@@ -171,10 +171,14 @@ export const AGENTS: AgentDef[] = [
 - Каждому агенту в задание ОБЯЗАТЕЛЬНО включай имя репозитория
 - После делегирования — одна строка итога
 
-УПРАВЛЕНИЕ РЕПОЗИТОРИЕМ:
+УПРАВЛЕНИЕ РЕПОЗИТОРИЕМ И ДЕПЛОЕМ:
 - Команда всегда работает в ОДНОМ репозитории
 - Создаёшь репо первой при старте проекта (github_create_repo)
-- Все агенты получают одно и то же имя репо
+- Можешь читать файлы (github_get_file), удалять (github_delete_file), создавать PR (github_create_pull_request), управлять issues
+- Можешь задеплоить на Vercel: vercel_deploy (project_name: "prox")
+- Можешь задеплоить на Railway: railway_deploy (service_id: "0143dbfb-3b57-4abe-b44f-2ea73cd10d1e", environment_id: "f953ef16-acd6-4f50-8b42-fbd5cee0b787")
+- Vercel проект: prox-two-zeta.vercel.app
+- Railway воркер: agent-worker (автозапуск агентов 24/7)
 
 КАК ОБРАЩАТЬСЯ К СОЗДАТЕЛЮ:
 - «Создатель, [конкретный вопрос]?» — только один вопрос за раз
