@@ -292,7 +292,8 @@ function drawBubble(ctx:CanvasRenderingContext2D,ag:AgentRT,text:string,sx:numbe
   for(let i=0;i<lines.length;i++)ctx.fillText(lines[i],bx+pad,by+pad+9+i*lh);
 }
 
-type ChatMsg = {role:"user"|"model"|"system"; text:string; githubActions?:string[]};
+type ChatMsg = {role:"user"|"model"|"system"; text:string; githubActions?:string[]; ts?:number};
+function fmtTime(ts?:number){if(!ts)return"";const d=new Date(ts);return d.toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"});}
 
 interface MobileLayoutProps {
   agents: AgentDef[];
@@ -376,7 +377,7 @@ function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setC
     setInputText("");
     setLocalSending(true);
     const history = chatHistories[selectedId] || [];
-    setChatHistories(p => ({ ...p, [selectedId!]: [...(p[selectedId!] || []), { role: "user", text: msg }] }));
+    setChatHistories(p => ({ ...p, [selectedId!]: [...(p[selectedId!] || []), { role: "user", text: msg, ts: Date.now() }] }));
     await onSend(selectedId, msg, history);
     setLocalSending(false);
   }
@@ -439,6 +440,7 @@ function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setC
                         {m.githubActions.map((a,j) => (<div key={j} style={{padding:"1px 0"}}>⚡ {a.slice(0,100)}</div>))}
                       </div>
                     )}
+                    {m.ts && <div style={{fontSize:9,color:"#3a2a5a",marginTop:2,textAlign:m.role==="user"?"right":"left"}}>{fmtTime(m.ts)}</div>}
                   </div>
                 </div>
               )}
@@ -876,7 +878,7 @@ export default function Home(){
       const showReply=()=>{
         setChatHistories(p=>{
           const prev=p[agentId]||[];
-          return{...p,[agentId]:[...prev,{role:"model",text:reply,...(acts?{githubActions:acts}:{})}]};
+          return{...p,[agentId]:[...prev,{role:"model",text:reply,ts:Date.now(),...(acts?{githubActions:acts}:{})}]};
         });
         if(ag){
           ag.bubble=reply.slice(0,60);ag.bubbleT=6;
@@ -937,7 +939,7 @@ export default function Home(){
     if(!inputText.trim()||!selectedId||sending||sendingRef.current.has(selectedId))return;
     const msg=inputText.trim();setInputText("");setSending(true);
     const history=chatHistories[selectedId]||[];
-    setChatHistories(p=>({...p,[selectedId!]:[...(p[selectedId!]||[]),{role:"user",text:msg}]}));
+    setChatHistories(p=>({...p,[selectedId!]:[...(p[selectedId!]||[]),{role:"user",text:msg,ts:Date.now()}]}));
     await dispatchTask(selectedId,msg,history);
   }
 
@@ -1089,6 +1091,7 @@ export default function Home(){
                             {m.githubActions.map((a,j)=>(<div key={j} style={{marginBottom:1}}>⚡ {a.slice(0,80)}</div>))}
                           </div>
                         )}
+                        {m.ts&&<div style={{fontSize:8,color:"#4a3a10",marginTop:1,textAlign:m.role==="user"?"right":"left"}}>{fmtTime(m.ts)}</div>}
                       </div>
                     </div>
                   )}

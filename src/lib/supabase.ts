@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 
-export type ChatMsg = { role: "user" | "model" | "system"; text: string; githubActions?: string[] };
+export type ChatMsg = { role: "user" | "model" | "system"; text: string; githubActions?: string[]; ts?: number };
 
 const url = process.env.SUPABASE_URL!;
 const key = process.env.SUPABASE_SERVICE_KEY!;

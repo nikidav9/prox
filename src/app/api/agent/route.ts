@@ -220,7 +220,7 @@ export async function POST(req: NextRequest) {
     const stored: ChatMsg[] = await loadHistory(agentId);
     const fullHistory: ChatMsg[] = stored.length > 0 ? stored : (history || []);
     const compressedHistory = await compressHistory(fullHistory);
-    const userMsg: ChatMsg = { role: "user", text: message };
+    const userMsg: ChatMsg = { role: "user", text: message, ts: Date.now() };
     await saveHistory(agentId, [...compressedHistory, userMsg]);
 
     const trimmedHistory = compressedHistory.filter(m => m.role === "user" || m.role === "model");
@@ -462,7 +462,7 @@ export async function POST(req: NextRequest) {
         .trim();
     }
 
-    const botMsg: ChatMsg = { role: "model", text, ...(githubActions.length ? { githubActions } : {}) };
+    const botMsg: ChatMsg = { role: "model", text, ts: Date.now(), ...(githubActions.length ? { githubActions } : {}) };
     await saveHistory(agentId, [...compressedHistory, userMsg, botMsg]);
 
     return NextResponse.json({
