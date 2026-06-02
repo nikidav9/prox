@@ -433,7 +433,7 @@ export async function POST(req: NextRequest) {
       : "";
     // Tell all agents they already have GitHub/API access — no need to ask for tokens or collaborator access
     const accessInfo = hasGithub
-      ? `\n\n✅ ДОСТУП УЖЕ НАСТРОЕН: у тебя есть GitHub токен с правами write на все репозитории nikidav9/*. НЕ проси пользователя добавить тебя как collaborator — просто вызывай инструменты github_* напрямую. Токен уже встроен, никаких дополнительных прав не нужно. Репозиторий владельца: nikidav9. Просто вызови github_list_files или github_get_file прямо сейчас.`
+      ? `\n\n✅ ВСЕ ТОКЕНЫ УЖЕ НАСТРОЕНЫ — НЕ ПРОСИ ИХ У ПОЛЬЗОВАТЕЛЯ:\n- GitHub: токен с правами write на nikidav9/* — вызывай github_* напрямую\n- Vercel: VERCEL_TOKEN уже в env — вызывай vercel_* напрямую (vercel_list_projects, vercel_deploy и т.д.)\n- Supabase: SUPABASE_URL + SUPABASE_SERVICE_KEY в env — вызывай supabase_* напрямую\n- Railway: RAILWAY_TOKEN в env — вызывай railway_graphql напрямую\n- Telegram: TELEGRAM_BOT_TOKEN в env\nПросто вызывай инструменты — всё работает.`
       : "";
     const systemInstruction = agent.soul
       + "\n\nПРАВИЛА ОТВЕТА (СТРОГО): пиши максимум 1-2 предложения. Никаких вступлений, никаких 'конечно', никаких списков. Только суть."
