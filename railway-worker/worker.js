@@ -69,7 +69,7 @@ async function tick() {
       fetch(`${AGENT_URL}/api/agent`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: last.text, agentId: agent_id, history: [], githubToken: GITHUB_TOKEN }),
+        body: JSON.stringify({ message: last.text, agentId: agent_id, history: [] }),
       })
         .then(r => r.json())
         .then(d => console.log(`[worker] ${agent_id} done: ${(d.text||'').slice(0, 60)}`))
