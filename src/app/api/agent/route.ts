@@ -565,6 +565,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Always strip any leftover [TASK:] markers from saved text
+    text = text.replace(/\[TASK:[\w-]+:[^\]]+\]\s*/g, "").trim();
     if (!text) text = "Готово.";
 
     const botMsg: ChatMsg = { role: "model", text, ts: Date.now(), ...(githubActions.length ? { githubActions } : {}) };
