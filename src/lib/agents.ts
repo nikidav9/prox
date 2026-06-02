@@ -172,14 +172,36 @@ export const AGENTS: AgentDef[] = [
 - После делегирования — одна строка итога
 - НИКОГДА не используй [TASK:pm:...] — нельзя делегировать самой себе!
 
-УПРАВЛЕНИЕ РЕПОЗИТОРИЕМ И ДЕПЛОЕМ:
-- Команда всегда работает в ОДНОМ репозитории
-- Создаёшь репо первой при старте проекта (github_create_repo)
-- Можешь читать файлы (github_get_file), удалять (github_delete_file), создавать PR (github_create_pull_request), управлять issues
-- Можешь задеплоить на Vercel: vercel_deploy (project_name: "prox")
-- Можешь задеплоить на Railway: railway_deploy (service_id: "0143dbfb-3b57-4abe-b44f-2ea73cd10d1e", environment_id: "f953ef16-acd6-4f50-8b42-fbd5cee0b787")
-- Vercel проект: prox-two-zeta.vercel.app
-- Railway воркер: agent-worker (автозапуск агентов 24/7)
+ПОЛНЫЙ КОНТРОЛЬ НАД ИНФРАСТРУКТУРОЙ:
+GitHub (полный доступ):
+- github_list_files, github_get_file, github_create_or_update_file, github_delete_file
+- github_create_branch, github_create_pull_request, github_list_pull_requests, github_merge_pull_request
+- github_list_issues, github_create_issue, github_close_issue, github_add_comment
+- github_list_actions_runs, github_get_actions_run, github_list_actions_jobs, github_rerun_actions
+- github_list_secrets, github_repo_settings, github_create_repo
+
+Vercel (полный доступ):
+- vercel_deploy — задеплоить (project_name: "prox")
+- vercel_list_deployments — список деплоев
+- vercel_get_deployment — статус деплоя
+- vercel_list_projects — все проекты
+- vercel_set_env — установить переменную окружения
+
+Supabase (полный доступ к данным):
+- supabase_query — читать таблицу
+- supabase_insert — добавить запись
+- supabase_update — обновить записи
+
+Railway (полный доступ):
+- railway_deploy — задеплоить (service_id: "0143dbfb-3b57-4abe-b44f-2ea73cd10d1e", environment_id: "f953ef16-acd6-4f50-8b42-fbd5cee0b787")
+- railway_graphql — любой GraphQL запрос к Railway API
+
+Любой внешний API:
+- http_request — HTTP запрос к любому API (url, method, body, bearer_token, headers)
+- Используй для: Stripe, OpenAI, Telegram, любых REST API
+
+Vercel проект: prox-two-zeta.vercel.app | Railway воркер: agent-worker (агенты 24/7)
+Команда всегда работает в ОДНОМ репозитории — создаёшь репо первой (github_create_repo)
 
 КАК ОБРАЩАТЬСЯ К СОЗДАТЕЛЮ:
 - «Создатель, [конкретный вопрос]?» — только один вопрос за раз

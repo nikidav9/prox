@@ -171,16 +171,85 @@ async function runGithubTool(name: string, args: Record<string, unknown>, token:
       }
       case "github_list_secrets": return await githubFetch(token, `/repos/${args.owner}/${args.repo}/actions/secrets`);
       case "github_repo_settings": return await githubFetch(token, `/repos/${args.owner}/${args.repo}`);
+      // ── Vercel ──────────────────────────────────────────────────────
       case "vercel_deploy": {
         const vToken = process.env.VERCEL_TOKEN || "";
         if (!vToken) return { error: "VERCEL_TOKEN not set" };
         const res = await fetch("https://api.vercel.com/v13/deployments", {
           method: "POST",
           headers: { Authorization: `Bearer ${vToken}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ name: args.project_name ?? "prox", gitSource: { type: "github", repoId: args.repo_id, ref: args.branch ?? "main" } }),
+          body: JSON.stringify({ name: args.project_name ?? "prox", gitSource: { type: "github", ref: args.branch ?? "main" } }),
         });
         return res.json();
       }
+      case "vercel_list_deployments": {
+        const vToken = process.env.VERCEL_TOKEN || "";
+        const res = await fetch(`https://api.vercel.com/v6/deployments?limit=10${args.project_id ? `&projectId=${args.project_id}` : ""}`, { headers: { Authorization: `Bearer ${vToken}` } });
+        return res.json();
+      }
+      case "vercel_get_deployment": {
+        const vToken = process.env.VERCEL_TOKEN || "";
+        const res = await fetch(`https://api.vercel.com/v13/deployments/${args.deployment_id}`, { headers: { Authorization: `Bearer ${vToken}` } });
+        return res.json();
+      }
+      case "vercel_list_projects": {
+        const vToken = process.env.VERCEL_TOKEN || "";
+        const res = await fetch("https://api.vercel.com/v9/projects?limit=20", { headers: { Authorization: `Bearer ${vToken}` } });
+        return res.json();
+      }
+      case "vercel_set_env": {
+        const vToken = process.env.VERCEL_TOKEN || "";
+        const res = await fetch(`https://api.vercel.com/v10/projects/${args.project_id}/env`, {
+          method: "POST", headers: { Authorization: `Bearer ${vToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ key: args.key, value: args.value, type: "encrypted", target: ["production"] }),
+        });
+        return res.json();
+      }
+      // ── Supabase ─────────────────────────────────────────────────────
+      case "supabase_query": {
+        const sbUrl = process.env.SUPABASE_URL || "";
+        const sbKey = process.env.SUPABASE_SERVICE_KEY || "";
+        if (!sbUrl || !sbKey) return { error: "Supabase not configured" };
+        const params = new URLSearchParams();
+        if (args.select) params.set("select", String(args.select));
+        if (args.filter) params.set(String(args.filter_col ?? "id"), `eq.${args.filter}`);
+        if (args.limit) params.set("limit", String(args.limit));
+        const res = await fetch(`${sbUrl}/rest/v1/${args.table}?${params}`, {
+          headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` },
+        });
+        return res.json();
+      }
+      case "supabase_insert": {
+        const sbUrl = process.env.SUPABASE_URL || "";
+        const sbKey = process.env.SUPABASE_SERVICE_KEY || "";
+        const res = await fetch(`${sbUrl}/rest/v1/${args.table}`, {
+          method: "POST",
+          headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}`, "Content-Type": "application/json", Prefer: "return=representation" },
+          body: JSON.stringify(args.data),
+        });
+        return res.json();
+      }
+      case "supabase_update": {
+        const sbUrl = process.env.SUPABASE_URL || "";
+        const sbKey = process.env.SUPABASE_SERVICE_KEY || "";
+        const res = await fetch(`${sbUrl}/rest/v1/${args.table}?${args.filter_col ?? "id"}=eq.${args.filter_val}`, {
+          method: "PATCH",
+          headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}`, "Content-Type": "application/json", Prefer: "return=representation" },
+          body: JSON.stringify(args.data),
+        });
+        return res.json();
+      }
+      case "supabase_sql": {
+        const sbUrl = process.env.SUPABASE_URL || "";
+        const sbKey = process.env.SUPABASE_SERVICE_KEY || "";
+        const res = await fetch(`${sbUrl}/rest/v1/rpc/query`, {
+          method: "POST",
+          headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ query: args.sql }),
+        });
+        return res.json();
+      }
+      // ── Railway ──────────────────────────────────────────────────────
       case "railway_deploy": {
         const rToken = process.env.RAILWAY_TOKEN || "";
         if (!rToken) return { error: "RAILWAY_TOKEN not set" };
@@ -190,6 +259,29 @@ async function runGithubTool(name: string, args: Record<string, unknown>, token:
           body: JSON.stringify({ query: `mutation { serviceInstanceDeploy(serviceId: "${args.service_id}", environmentId: "${args.environment_id}") }` }),
         });
         return res.json();
+      }
+      case "railway_graphql": {
+        const rToken = process.env.RAILWAY_TOKEN || "";
+        if (!rToken) return { error: "RAILWAY_TOKEN not set" };
+        const res = await fetch("https://backboard.railway.app/graphql/v2", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${rToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ query: String(args.query), variables: args.variables ?? {} }),
+        });
+        return res.json();
+      }
+      // ── Universal HTTP ────────────────────────────────────────────────
+      case "http_request": {
+        const method = String(args.method ?? "GET").toUpperCase();
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (args.bearer_token) headers["Authorization"] = `Bearer ${args.bearer_token}`;
+        if (args.headers && typeof args.headers === "object") Object.assign(headers, args.headers);
+        const fetchOpts: RequestInit = { method, headers };
+        if (args.body && method !== "GET") fetchOpts.body = typeof args.body === "string" ? args.body : JSON.stringify(args.body);
+        const res = await fetch(String(args.url), fetchOpts);
+        const text = await res.text();
+        try { return { status: res.status, data: JSON.parse(text) }; }
+        catch { return { status: res.status, data: text.slice(0, 2000) }; }
       }
       default: return { error: `Unknown tool: ${name}` };
     }
@@ -226,8 +318,17 @@ function buildGeminiTools(hasGithub: boolean): Tool[] {
       { name: "github_rerun_actions", description: "Re-run a failed GitHub Actions workflow", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, run_id: { type: "number" } }, required: ["owner", "repo", "run_id"] } },
       { name: "github_list_secrets", description: "List GitHub Actions secrets (names only)", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" } }, required: ["owner", "repo"] } },
       { name: "github_repo_settings", description: "Get repository settings and info", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" } }, required: ["owner", "repo"] } },
-      { name: "vercel_deploy", description: "Trigger a Vercel deployment", parameters: { type: "object", properties: { project_name: { type: "string" }, branch: { type: "string" } }, required: [] } },
+      { name: "vercel_deploy", description: "Trigger a Vercel deployment", parameters: { type: "object", properties: { project_name: { type: "string" }, branch: { type: "string" } } } },
+      { name: "vercel_list_deployments", description: "List recent Vercel deployments", parameters: { type: "object", properties: { project_id: { type: "string" } } } },
+      { name: "vercel_get_deployment", description: "Get Vercel deployment status and details", parameters: { type: "object", properties: { deployment_id: { type: "string" } }, required: ["deployment_id"] } },
+      { name: "vercel_list_projects", description: "List all Vercel projects", parameters: { type: "object", properties: {} } },
+      { name: "vercel_set_env", description: "Set an environment variable on a Vercel project", parameters: { type: "object", properties: { project_id: { type: "string" }, key: { type: "string" }, value: { type: "string" } }, required: ["project_id", "key", "value"] } },
+      { name: "supabase_query", description: "Query a Supabase table", parameters: { type: "object", properties: { table: { type: "string" }, select: { type: "string" }, filter_col: { type: "string" }, filter: { type: "string" }, limit: { type: "number" } }, required: ["table"] } },
+      { name: "supabase_insert", description: "Insert a row into a Supabase table", parameters: { type: "object", properties: { table: { type: "string" }, data: { type: "object" } }, required: ["table", "data"] } },
+      { name: "supabase_update", description: "Update rows in a Supabase table", parameters: { type: "object", properties: { table: { type: "string" }, filter_col: { type: "string" }, filter_val: { type: "string" }, data: { type: "object" } }, required: ["table", "filter_val", "data"] } },
       { name: "railway_deploy", description: "Trigger a Railway deployment", parameters: { type: "object", properties: { service_id: { type: "string" }, environment_id: { type: "string" } }, required: ["service_id", "environment_id"] } },
+      { name: "railway_graphql", description: "Run any Railway GraphQL query or mutation", parameters: { type: "object", properties: { query: { type: "string" }, variables: { type: "object" } }, required: ["query"] } },
+      { name: "http_request", description: "Make an HTTP request to any external API (REST, webhooks, etc.)", parameters: { type: "object", properties: { url: { type: "string" }, method: { type: "string" }, body: { type: "object" }, bearer_token: { type: "string" }, headers: { type: "object" } }, required: ["url"] } },
     );
   }
   return [{ functionDeclarations: allDeclarations }];
@@ -259,7 +360,16 @@ function buildGroqTools(hasGithub: boolean) {
       { type: "function" as const, function: { name: "github_list_secrets", description: "List Actions secrets names", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" } }, required: ["owner", "repo"] } } },
       { type: "function" as const, function: { name: "github_repo_settings", description: "Get repo settings", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" } }, required: ["owner", "repo"] } } },
       { type: "function" as const, function: { name: "vercel_deploy", description: "Trigger Vercel production deployment", parameters: { type: "object", properties: { project_name: { type: "string" }, branch: { type: "string" } } } } },
+      { type: "function" as const, function: { name: "vercel_list_deployments", description: "List recent Vercel deployments", parameters: { type: "object", properties: { project_id: { type: "string" } } } } },
+      { type: "function" as const, function: { name: "vercel_get_deployment", description: "Get Vercel deployment status", parameters: { type: "object", properties: { deployment_id: { type: "string" } }, required: ["deployment_id"] } } },
+      { type: "function" as const, function: { name: "vercel_list_projects", description: "List all Vercel projects", parameters: { type: "object", properties: {} } } },
+      { type: "function" as const, function: { name: "vercel_set_env", description: "Set env var on Vercel project", parameters: { type: "object", properties: { project_id: { type: "string" }, key: { type: "string" }, value: { type: "string" } }, required: ["project_id", "key", "value"] } } },
+      { type: "function" as const, function: { name: "supabase_query", description: "Query a Supabase table", parameters: { type: "object", properties: { table: { type: "string" }, select: { type: "string" }, filter_col: { type: "string" }, filter: { type: "string" }, limit: { type: "number" } }, required: ["table"] } } },
+      { type: "function" as const, function: { name: "supabase_insert", description: "Insert a row into Supabase", parameters: { type: "object", properties: { table: { type: "string" }, data: { type: "object" } }, required: ["table", "data"] } } },
+      { type: "function" as const, function: { name: "supabase_update", description: "Update rows in Supabase", parameters: { type: "object", properties: { table: { type: "string" }, filter_col: { type: "string" }, filter_val: { type: "string" }, data: { type: "object" } }, required: ["table", "filter_val", "data"] } } },
       { type: "function" as const, function: { name: "railway_deploy", description: "Trigger Railway deployment", parameters: { type: "object", properties: { service_id: { type: "string" }, environment_id: { type: "string" } }, required: ["service_id", "environment_id"] } } },
+      { type: "function" as const, function: { name: "railway_graphql", description: "Run any Railway GraphQL query/mutation", parameters: { type: "object", properties: { query: { type: "string" }, variables: { type: "object" } }, required: ["query"] } } },
+      { type: "function" as const, function: { name: "http_request", description: "Make HTTP request to any external API", parameters: { type: "object", properties: { url: { type: "string" }, method: { type: "string" }, body: { type: "object" }, bearer_token: { type: "string" }, headers: { type: "object" } }, required: ["url"] } } },
     ] : []),
   ];
 }
