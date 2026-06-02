@@ -32,7 +32,7 @@ const MODEL_POOL: ModelEntry[] = [
   { id: "groq-llama3-8b",          provider: "groq",   model: "llama3-8b-8192" },
   { id: "groq-llama32-3b",         provider: "groq",   model: "llama-3.2-3b-preview" },
   { id: "groq-llama32-1b",         provider: "groq",   model: "llama-3.2-1b-preview" },
-  // OpenRouter (free models)
+  // OpenRouter (бесплатные модели)
   { id: "or-llama33-70b",          provider: "openrouter", model: "meta-llama/llama-3.3-70b-instruct:free" },
   { id: "or-deepseek-r1",          provider: "openrouter", model: "deepseek/deepseek-r1:free" },
   { id: "or-deepseek-v3",          provider: "openrouter", model: "deepseek/deepseek-chat-v3-0324:free" },
@@ -181,14 +181,13 @@ async function consultAgent(targetId: string, question: string, githubToken: str
 export async function GET() {
   const now = Date.now();
   return NextResponse.json({
-    version: 10,
+    version: 9,
     pool: MODEL_POOL.map(m => ({
-      id: m.id, model: m.model, provider: m.provider,
+      id: m.id, model: m.model,
       available: (cooldowns.get(m.id) ?? 0) <= now,
       cooldownUntil: cooldowns.get(m.id) ? new Date(cooldowns.get(m.id)!).toISOString() : null,
     })),
     groqConfigured: !!groq,
-    openrouterConfigured: !!process.env.OPENROUTER_API_KEY,
   });
 }
 
@@ -222,6 +221,7 @@ export async function POST(req: NextRequest) {
     let lastError = "";
     let usedProvider = "";
 
+    // Per-model timeout to prevent Vercel 60s limit
     function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
       return Promise.race([
         promise,
@@ -301,7 +301,6 @@ export async function POST(req: NextRequest) {
           }
           usedProvider = entry.id;
           break;
-
         } else if (entry.provider === "openrouter" && process.env.OPENROUTER_API_KEY) {
           const orMessages = [
             { role: "system", content: systemInstruction },
