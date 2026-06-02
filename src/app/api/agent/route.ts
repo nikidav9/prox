@@ -148,6 +148,29 @@ async function runGithubTool(name: string, args: Record<string, unknown>, token:
       });
       case "github_close_issue": return await githubFetch(token, `/repos/${args.owner}/${args.repo}/issues/${args.issue_number}`, "PATCH", { state: "closed" });
       case "github_add_comment": return await githubFetch(token, `/repos/${args.owner}/${args.repo}/issues/${args.issue_number}/comments`, "POST", { body: args.body });
+      case "github_merge_pull_request": return await githubFetch(token, `/repos/${args.owner}/${args.repo}/pulls/${args.pull_number}/merge`, "PUT", {
+        commit_title: args.commit_title ?? "Merge pull request", merge_method: args.merge_method ?? "squash",
+      });
+      case "github_list_pull_requests": return await githubFetch(token, `/repos/${args.owner}/${args.repo}/pulls?state=${args.state ?? "open"}`);
+      case "github_list_actions_runs": return await githubFetch(token, `/repos/${args.owner}/${args.repo}/actions/runs?per_page=10`);
+      case "github_get_actions_run": return await githubFetch(token, `/repos/${args.owner}/${args.repo}/actions/runs/${args.run_id}`);
+      case "github_list_actions_jobs": {
+        const run = await githubFetch(token, `/repos/${args.owner}/${args.repo}/actions/runs/${args.run_id}/jobs`) as Record<string,unknown>;
+        // Trim job logs to avoid token overflow
+        const jobs = ((run.jobs as Record<string,unknown>[]) || []).map(j => ({
+          id: j.id, name: j.name, status: j.status, conclusion: j.conclusion,
+          steps: ((j.steps as Record<string,unknown>[]) || []).map(s => ({ name: s.name, status: s.status, conclusion: s.conclusion })),
+        }));
+        return { total_count: run.total_count, jobs };
+      }
+      case "github_rerun_actions": return await githubFetch(token, `/repos/${args.owner}/${args.repo}/actions/runs/${args.run_id}/rerun`, "POST", {});
+      case "github_get_actions_logs": {
+        // Returns download URL for logs
+        const res = await githubFetch(token, `/repos/${args.owner}/${args.repo}/actions/runs/${args.run_id}/logs`) as Record<string,unknown>;
+        return res;
+      }
+      case "github_list_secrets": return await githubFetch(token, `/repos/${args.owner}/${args.repo}/actions/secrets`);
+      case "github_repo_settings": return await githubFetch(token, `/repos/${args.owner}/${args.repo}`);
       case "vercel_deploy": {
         const vToken = process.env.VERCEL_TOKEN || "";
         if (!vToken) return { error: "VERCEL_TOKEN not set" };
@@ -193,8 +216,16 @@ function buildGeminiTools(hasGithub: boolean): Tool[] {
       { name: "github_get_file", description: "Read file content from a repository", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, path: { type: "string" } }, required: ["owner", "repo", "path"] } },
       { name: "github_delete_file", description: "Delete a file from a repository", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, path: { type: "string" }, message: { type: "string" } }, required: ["owner", "repo", "path"] } },
       { name: "github_create_pull_request", description: "Create a pull request", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, title: { type: "string" }, body: { type: "string" }, head: { type: "string" }, base: { type: "string" } }, required: ["owner", "repo", "title", "head"] } },
+      { name: "github_list_pull_requests", description: "List open or closed pull requests", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, state: { type: "string" } }, required: ["owner", "repo"] } },
+      { name: "github_merge_pull_request", description: "Merge a pull request", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, pull_number: { type: "number" }, commit_title: { type: "string" }, merge_method: { type: "string" } }, required: ["owner", "repo", "pull_number"] } },
       { name: "github_close_issue", description: "Close a GitHub issue", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, issue_number: { type: "number" } }, required: ["owner", "repo", "issue_number"] } },
       { name: "github_add_comment", description: "Add comment to issue or PR", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, issue_number: { type: "number" }, body: { type: "string" } }, required: ["owner", "repo", "issue_number", "body"] } },
+      { name: "github_list_actions_runs", description: "List recent GitHub Actions workflow runs", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" } }, required: ["owner", "repo"] } },
+      { name: "github_get_actions_run", description: "Get details of a specific Actions run", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, run_id: { type: "number" } }, required: ["owner", "repo", "run_id"] } },
+      { name: "github_list_actions_jobs", description: "List jobs and steps of an Actions run", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, run_id: { type: "number" } }, required: ["owner", "repo", "run_id"] } },
+      { name: "github_rerun_actions", description: "Re-run a failed GitHub Actions workflow", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, run_id: { type: "number" } }, required: ["owner", "repo", "run_id"] } },
+      { name: "github_list_secrets", description: "List GitHub Actions secrets (names only)", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" } }, required: ["owner", "repo"] } },
+      { name: "github_repo_settings", description: "Get repository settings and info", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" } }, required: ["owner", "repo"] } },
       { name: "vercel_deploy", description: "Trigger a Vercel deployment", parameters: { type: "object", properties: { project_name: { type: "string" }, branch: { type: "string" } }, required: [] } },
       { name: "railway_deploy", description: "Trigger a Railway deployment", parameters: { type: "object", properties: { service_id: { type: "string" }, environment_id: { type: "string" } }, required: ["service_id", "environment_id"] } },
     );
@@ -217,8 +248,16 @@ function buildGroqTools(hasGithub: boolean) {
       { type: "function" as const, function: { name: "github_get_file", description: "Read file content", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, path: { type: "string" } }, required: ["owner", "repo", "path"] } } },
       { type: "function" as const, function: { name: "github_delete_file", description: "Delete a file", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, path: { type: "string" }, message: { type: "string" } }, required: ["owner", "repo", "path"] } } },
       { type: "function" as const, function: { name: "github_create_pull_request", description: "Create a pull request", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, title: { type: "string" }, body: { type: "string" }, head: { type: "string" }, base: { type: "string" } }, required: ["owner", "repo", "title", "head"] } } },
+      { type: "function" as const, function: { name: "github_list_pull_requests", description: "List pull requests", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, state: { type: "string" } }, required: ["owner", "repo"] } } },
+      { type: "function" as const, function: { name: "github_merge_pull_request", description: "Merge a pull request", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, pull_number: { type: "number" }, commit_title: { type: "string" }, merge_method: { type: "string" } }, required: ["owner", "repo", "pull_number"] } } },
       { type: "function" as const, function: { name: "github_close_issue", description: "Close an issue", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, issue_number: { type: "number" } }, required: ["owner", "repo", "issue_number"] } } },
       { type: "function" as const, function: { name: "github_add_comment", description: "Add comment to issue/PR", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, issue_number: { type: "number" }, body: { type: "string" } }, required: ["owner", "repo", "issue_number", "body"] } } },
+      { type: "function" as const, function: { name: "github_list_actions_runs", description: "List recent Actions runs", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" } }, required: ["owner", "repo"] } } },
+      { type: "function" as const, function: { name: "github_get_actions_run", description: "Get a specific Actions run", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, run_id: { type: "number" } }, required: ["owner", "repo", "run_id"] } } },
+      { type: "function" as const, function: { name: "github_list_actions_jobs", description: "List jobs/steps of an Actions run", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, run_id: { type: "number" } }, required: ["owner", "repo", "run_id"] } } },
+      { type: "function" as const, function: { name: "github_rerun_actions", description: "Re-run a failed Actions workflow", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, run_id: { type: "number" } }, required: ["owner", "repo", "run_id"] } } },
+      { type: "function" as const, function: { name: "github_list_secrets", description: "List Actions secrets names", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" } }, required: ["owner", "repo"] } } },
+      { type: "function" as const, function: { name: "github_repo_settings", description: "Get repo settings", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" } }, required: ["owner", "repo"] } } },
       { type: "function" as const, function: { name: "vercel_deploy", description: "Trigger Vercel production deployment", parameters: { type: "object", properties: { project_name: { type: "string" }, branch: { type: "string" } } } } },
       { type: "function" as const, function: { name: "railway_deploy", description: "Trigger Railway deployment", parameters: { type: "object", properties: { service_id: { type: "string" }, environment_id: { type: "string" } }, required: ["service_id", "environment_id"] } } },
     ] : []),
