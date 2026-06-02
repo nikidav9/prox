@@ -375,6 +375,44 @@ function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setC
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatHist, selectedId]);
 
+  // Pull-to-refresh
+  const [pullY, setPullY] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const pullStartY = useRef(0);
+  const pullListRef = useRef<HTMLDivElement>(null);
+  function onPullStart(e: React.TouchEvent) {
+    if ((pullListRef.current?.scrollTop ?? 0) > 0) return;
+    pullStartY.current = e.touches[0].clientY;
+  }
+  function onPullMove(e: React.TouchEvent) {
+    if ((pullListRef.current?.scrollTop ?? 0) > 0) { setPullY(0); return; }
+    const dy = e.touches[0].clientY - pullStartY.current;
+    if (dy > 0) setPullY(Math.min(dy * 0.45, 70));
+  }
+  async function onPullEnd() {
+    if (pullY >= 55 && !refreshing) {
+      setRefreshing(true); setPullY(0);
+      try {
+        const res = await fetch('/api/history');
+        if (res.ok) {
+          const data = await res.json();
+          if (data && typeof data === 'object') {
+            setChatHistories((prev: Record<string,ChatMsg[]>) => {
+              const merged = { ...prev };
+              for (const [id, msgs] of Object.entries(data) as [string,ChatMsg[]][]) {
+                if (msgs.length >= (prev[id]||[]).length) merged[id] = msgs;
+              }
+              return merged;
+            });
+          }
+        }
+      } catch {}
+      setRefreshing(false);
+    } else {
+      setPullY(0);
+    }
+  }
+
   async function sendMessage() {
     if (!inputText.trim() || !selectedId || localSending || (!!selectedId && sendingIds.has(selectedId))) return;
     const msg = inputText.trim();
@@ -549,7 +587,14 @@ function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setC
       </div>
       <div style={{flex:1,overflow:"hidden",display:"flex",flexDirection:"column"}}>
         {tab === "agents" ? (
-          <div style={{flex:1,overflowY:"auto"}}>
+          <div ref={pullListRef} style={{flex:1,overflowY:"auto",position:"relative"}}
+            onTouchStart={onPullStart} onTouchMove={onPullMove} onTouchEnd={onPullEnd}>
+            {(pullY > 0 || refreshing) && (
+              <div style={{display:"flex",justifyContent:"center",alignItems:"center",height:pullY||40,
+                color:"#7a6090",fontSize:12,transition:pullY>0?"none":"height 0.3s",overflow:"hidden"}}>
+                {refreshing ? "Обновляем…" : pullY >= 55 ? "↑ Отпустите" : "↓ Потяните для обновления"}
+              </div>
+            )}
             {agents.map((agent) => {
               const hist = chatHistories[agent.id] || [];
               const lastMsg = hist.filter(m=>m.role!=="system").at(-1);
