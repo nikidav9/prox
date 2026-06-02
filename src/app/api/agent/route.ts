@@ -130,19 +130,27 @@ async function runGithubTool(name: string, args: Record<string, unknown>, token:
   } catch (err) { return { error: String(err) }; }
 }
 
-const GITHUB_TOOLS: Tool[] = [{
-  functionDeclarations: [
-    { name: "github_get_user", description: "Get the authenticated GitHub user info", parameters: { type: SchemaType.OBJECT, properties: {} } },
-    { name: "github_list_repos", description: "List the user's GitHub repositories", parameters: { type: SchemaType.OBJECT, properties: {} } },
-    { name: "github_create_repo", description: "Create a new GitHub repository", parameters: { type: SchemaType.OBJECT, properties: { name: { type: SchemaType.STRING }, description: { type: SchemaType.STRING }, private: { type: SchemaType.BOOLEAN }, auto_init: { type: SchemaType.BOOLEAN } }, required: ["name"] } },
-    { name: "github_get_repo", description: "Get info about a GitHub repository", parameters: { type: SchemaType.OBJECT, properties: { owner: { type: SchemaType.STRING }, repo: { type: SchemaType.STRING } }, required: ["owner", "repo"] } },
-    { name: "github_create_or_update_file", description: "Create or update a file in a GitHub repository", parameters: { type: SchemaType.OBJECT, properties: { owner: { type: SchemaType.STRING }, repo: { type: SchemaType.STRING }, path: { type: SchemaType.STRING }, content: { type: SchemaType.STRING }, message: { type: SchemaType.STRING }, branch: { type: SchemaType.STRING } }, required: ["owner", "repo", "path", "content", "message"] } },
-    { name: "github_create_branch", description: "Create a new branch in a repository", parameters: { type: SchemaType.OBJECT, properties: { owner: { type: SchemaType.STRING }, repo: { type: SchemaType.STRING }, branch: { type: SchemaType.STRING } }, required: ["owner", "repo", "branch"] } },
-    { name: "github_list_files", description: "List files in a repository directory", parameters: { type: SchemaType.OBJECT, properties: { owner: { type: SchemaType.STRING }, repo: { type: SchemaType.STRING }, path: { type: SchemaType.STRING } }, required: ["owner", "repo"] } },
-    { name: "github_list_issues", description: "List open issues in a repository", parameters: { type: SchemaType.OBJECT, properties: { owner: { type: SchemaType.STRING }, repo: { type: SchemaType.STRING } }, required: ["owner", "repo"] } },
-    { name: "github_create_issue", description: "Create a new GitHub issue", parameters: { type: SchemaType.OBJECT, properties: { owner: { type: SchemaType.STRING }, repo: { type: SchemaType.STRING }, title: { type: SchemaType.STRING }, body: { type: SchemaType.STRING }, labels: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } } }, required: ["owner", "repo", "title"] } },
-  ],
-}];
+function buildGeminiTools(hasGithub: boolean): Tool[] {
+  const agentListStr = AGENTS.map(a => `${a.id} (${a.name})`).join(", ");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const allDeclarations: any[] = [
+    { name: "consult_agent", description: `Спросить коллегу-агента. Доступные агенты: ${agentListStr}`, parameters: { type: "object", properties: { agentId: { type: "string" }, question: { type: "string" } }, required: ["agentId", "question"] } },
+  ];
+  if (hasGithub) {
+    allDeclarations.push(
+      { name: "github_get_user", description: "Get the authenticated GitHub user info", parameters: { type: "object", properties: {} } },
+      { name: "github_list_repos", description: "List the user's GitHub repositories", parameters: { type: "object", properties: {} } },
+      { name: "github_create_repo", description: "Create a new GitHub repository", parameters: { type: "object", properties: { name: { type: "string" }, description: { type: "string" }, private: { type: "boolean" }, auto_init: { type: "boolean" } }, required: ["name"] } },
+      { name: "github_get_repo", description: "Get info about a GitHub repository", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" } }, required: ["owner", "repo"] } },
+      { name: "github_create_or_update_file", description: "Create or update a file in a GitHub repository", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, path: { type: "string" }, content: { type: "string" }, message: { type: "string" }, branch: { type: "string" } }, required: ["owner", "repo", "path", "content", "message"] } },
+      { name: "github_create_branch", description: "Create a new branch", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, branch: { type: "string" } }, required: ["owner", "repo", "branch"] } },
+      { name: "github_list_files", description: "List files in a repository directory", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, path: { type: "string" } }, required: ["owner", "repo"] } },
+      { name: "github_list_issues", description: "List open issues in a repository", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" } }, required: ["owner", "repo"] } },
+      { name: "github_create_issue", description: "Create a new GitHub issue", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, title: { type: "string" }, body: { type: "string" } }, required: ["owner", "repo", "title"] } },
+    );
+  }
+  return [{ functionDeclarations: allDeclarations }];
+}
 
 function buildGroqTools(hasGithub: boolean) {
   return [
@@ -236,7 +244,7 @@ export async function POST(req: NextRequest) {
         if (entry.provider === "gemini") {
           const gModel = genAI.getGenerativeModel({
             model: entry.model, systemInstruction,
-            tools: hasGithub ? GITHUB_TOOLS : [],
+            tools: buildGeminiTools(hasGithub),
           });
           const chat = gModel.startChat({
             history: trimmedHistory.map(msg => ({ role: msg.role, parts: [{ text: msg.text }] })),
@@ -253,8 +261,16 @@ export async function POST(req: NextRequest) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const responses = await Promise.all(calls.map(async (part: any) => {
               const fc = part.functionCall!;
-              const toolResult = await runGithubTool(fc.name, fc.args as Record<string,unknown>, githubToken);
-              githubActions.push(`${fc.name}: ${JSON.stringify(toolResult).slice(0, 150)}`);
+              let toolResult: object;
+              if (fc.name === "consult_agent") {
+                const args = fc.args as Record<string,unknown>;
+                const reply = await consultAgent(String(args.agentId), String(args.question), githubToken, _depth);
+                toolResult = { reply };
+                githubActions.push(`👥 ${args.agentId}: ${reply.slice(0, 120)}`);
+              } else {
+                toolResult = await runGithubTool(fc.name, fc.args as Record<string,unknown>, githubToken);
+                githubActions.push(`${fc.name}: ${JSON.stringify(toolResult).slice(0, 150)}`);
+              }
               return { functionResponse: { name: fc.name, response: toolResult } };
             }));
             result = await withTimeout(
@@ -303,24 +319,51 @@ export async function POST(req: NextRequest) {
           usedProvider = entry.id;
           break;
         } else if (entry.provider === "openrouter" && process.env.OPENROUTER_API_KEY) {
-          const orMessages = [
+          const orMessages: { role: string; content: string; tool_call_id?: string; name?: string }[] = [
             { role: "system", content: systemInstruction },
             ...groqHistory,
             { role: "user", content: message },
           ];
-          const orRes = await withTimeout(fetch("https://openrouter.ai/api/v1/chat/completions", {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-              "Content-Type": "application/json",
-              "HTTP-Referer": "https://gemini-agents-mocha.vercel.app",
-              "X-Title": "Dev Office",
-            },
-            body: JSON.stringify({ model: entry.model, messages: orMessages, max_tokens: 1024 }),
-          }), modelTimeout);
-          const orData = await orRes.json() as { choices?: {message:{content:string}}[]; error?: {message:string} };
-          if (orData.error) throw new Error(orData.error.message);
-          text = orData.choices?.[0]?.message?.content || "Нет ответа";
+          const orTools = buildGroqTools(hasGithub);
+
+          for (let round = 0; round < 6; round++) {
+            const orRes = await withTimeout(fetch("https://openrouter.ai/api/v1/chat/completions", {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://gemini-agents-mocha.vercel.app",
+                "X-Title": "Dev Office",
+              },
+              body: JSON.stringify({ model: entry.model, messages: orMessages, max_tokens: 1024, tools: orTools, tool_choice: "auto" }),
+            }), modelTimeout);
+            const orData = await orRes.json() as {
+              choices?: { message: { content: string | null; tool_calls?: { id: string; function: { name: string; arguments: string } }[] } }[];
+              error?: { message: string };
+            };
+            if (orData.error) throw new Error(orData.error.message);
+            const orMsg = orData.choices?.[0]?.message;
+            if (!orMsg) throw new Error("Empty response from OpenRouter");
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            orMessages.push({ role: "assistant", content: orMsg.content ?? "", ...(orMsg.tool_calls ? { tool_calls: orMsg.tool_calls } : {}) } as any);
+            if (!orMsg.tool_calls || orMsg.tool_calls.length === 0) {
+              text = orMsg.content || "Нет ответа";
+              break;
+            }
+            for (const tc of orMsg.tool_calls) {
+              const args = JSON.parse(tc.function.arguments || "{}");
+              let toolResult: object;
+              if (tc.function.name === "consult_agent") {
+                const reply = await consultAgent(String(args.agentId), String(args.question), githubToken, _depth);
+                toolResult = { reply };
+                githubActions.push(`👥 ${args.agentId}: ${reply.slice(0, 120)}`);
+              } else {
+                toolResult = await runGithubTool(tc.function.name, args, githubToken);
+                githubActions.push(`${tc.function.name}: ${JSON.stringify(toolResult).slice(0, 150)}`);
+              }
+              orMessages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(toolResult), name: tc.function.name });
+            }
+          }
           usedProvider = entry.id;
           break;
         }
