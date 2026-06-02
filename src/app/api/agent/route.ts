@@ -761,10 +761,23 @@ export async function POST(req: NextRequest) {
     const botMsg: ChatMsg = { role: "model", text, ts: Date.now(), ...(githubActions.length ? { githubActions } : {}) };
     await saveHistory(agentId, [...compressedHistory, userMsg, botMsg]);
 
-    // If Lena is addressing the Creator — send to Telegram
-    if (agentId === "pm" && text && text !== "Готово.") {
+    // Send Lena's responses to Telegram
+    if (agentId === "pm") {
       const chatId = await getTelegramChatId();
-      if (chatId) await sendTelegram(chatId, `💬 <b>Лена:</b>\n${text}`);
+      if (chatId) {
+        const delegations = githubActions.filter(a => a.startsWith("👥"));
+        if (text && text !== "Готово.") {
+          await sendTelegram(chatId, `💬 Лена:\n${text}`);
+        } else if (delegations.length > 0) {
+          // She delegated but wrote no text — summarize who got tasks
+          const summary = delegations.map(d => d.replace("👥 ", "")).map(d => {
+            const [id, task] = d.split(": ");
+            const agent = AGENTS.find(a => a.id === id);
+            return `• ${agent?.name ?? id}: ${task?.slice(0, 60) ?? "задача"}`;
+          }).join("\n");
+          await sendTelegram(chatId, `✅ Лена раздала задачи:\n${summary}`);
+        }
+      }
     }
 
     return NextResponse.json({
