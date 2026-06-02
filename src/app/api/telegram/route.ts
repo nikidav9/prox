@@ -31,15 +31,11 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({ chat_id: chatId, action: "typing" }),
     }).catch(() => {});
 
-    // Add user reply to Lena's history
-    const existing = await loadHistory("pm");
-    await saveHistory("pm", [...existing, { role: "user", text, ts: Date.now() }]);
-
-    // Call Lena directly and get her response
+    // Call Lena — agent route handles history loading/saving itself
     const agentRes = await fetch(`${BASE_URL}/api/agent`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text, agentId: "pm", history: [], githubToken: "" }),
+      body: JSON.stringify({ message: text, agentId: "pm", history: [] }),
     }).catch(() => null);
 
     if (agentRes?.ok) {
