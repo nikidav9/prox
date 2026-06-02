@@ -181,13 +181,14 @@ async function consultAgent(targetId: string, question: string, githubToken: str
 export async function GET() {
   const now = Date.now();
   return NextResponse.json({
-    version: 9,
+    version: 10,
     pool: MODEL_POOL.map(m => ({
       id: m.id, model: m.model,
       available: (cooldowns.get(m.id) ?? 0) <= now,
       cooldownUntil: cooldowns.get(m.id) ? new Date(cooldowns.get(m.id)!).toISOString() : null,
     })),
     groqConfigured: !!groq,
+    openrouterConfigured: !!process.env.OPENROUTER_API_KEY,
   });
 }
 
@@ -230,7 +231,7 @@ export async function POST(req: NextRequest) {
     }
 
     for (const entry of availableModels()) {
-      const modelTimeout = entry.provider === "gemini" ? 18_000 : 12_000;
+      const modelTimeout = entry.provider === "gemini" ? 18_000 : entry.provider === "openrouter" ? 25_000 : 12_000;
       try {
         if (entry.provider === "gemini") {
           const gModel = genAI.getGenerativeModel({
