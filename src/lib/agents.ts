@@ -44,6 +44,9 @@ const CODE_BLOCK = `
 - "pages/_app.tsx + src/app/" вместе → конфликт роутеров Next.js. Удали ВСЮ папку pages/ или src/pages/
 - "@mui/material", "@chakra-ui", "tokens.css" — если пакет не в package.json, удали импорт
 - "Command npm run build exited with 1" → читай webpack errors выше, ищи Module not found
+- Tailwind CSS v4 PostCSS error → в postcss.config.js используй '@tailwindcss/postcss': {} вместо tailwindcss: {}, добавь @tailwindcss/postcss в devDeps, в globals.css пиши @import "tailwindcss" вместо @tailwind base/components/utilities, удали tailwind.config.ts
+- Tailwind v3 postcss.config.js: { plugins: { tailwindcss: {}, autoprefixer: {} } }
+- Tailwind v4 postcss.config.js: { plugins: { '@tailwindcss/postcss': {} } }
 - Решение через инструменты: github_list_files → найди конфликт → github_delete_file → передеплой
 
 ЭТАЛОННЫЕ ПАТТЕРНЫ (копируй точно, не выдумывай):
