@@ -514,6 +514,8 @@ export async function POST(req: NextRequest) {
     const seenCalls = new Set<string>();
     const addCall = (aid: string, q: string) => {
       const key = `${aid}:${q}`;
+      // Never self-delegate
+      if (aid === agentId) return;
       if (!seenCalls.has(key) && AGENTS.find(a=>a.id===aid)) { seenCalls.add(key); inlineCalls.push({ agentId: aid, question: q }); }
     };
     // Format 1: consult_agent(id, "q") | consult_agent(id="q")
