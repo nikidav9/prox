@@ -39,6 +39,13 @@ const CODE_BLOCK = `
 - Передавай конкретный вопрос/задание, не весь контекст
 - Если выполнил и нужен следующий шаг — поставь задачу через [TASK:]
 
+ТИПИЧНЫЕ ОШИБКИ ДЕПЛОЯ И КАК РЕШАТЬ:
+- "Module not found: Can't resolve" → импортируется несуществующий файл/пакет. Найди файл с ошибкой, удали или исправь импорт
+- "pages/_app.tsx + src/app/" вместе → конфликт роутеров Next.js. Удали ВСЮ папку pages/ или src/pages/
+- "@mui/material", "@chakra-ui", "tokens.css" — если пакет не в package.json, удали импорт
+- "Command npm run build exited with 1" → читай webpack errors выше, ищи Module not found
+- Решение через инструменты: github_list_files → найди конфликт → github_delete_file → передеплой
+
 ЭТАЛОННЫЕ ПАТТЕРНЫ (копируй точно, не выдумывай):
 Next.js API route:
 \`\`\`ts
