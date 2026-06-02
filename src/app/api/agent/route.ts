@@ -37,7 +37,7 @@ function markCooled(id: string, msg: string) {
   const waitMs = secMatch
     ? Math.ceil(parseFloat(secMatch[1]) * 1000)
     : minMatch ? parseInt(minMatch[1]) * 60_000
-    : 20 * 60_000;
+    : 60_000;
   cooldowns.set(id, Date.now() + Math.min(waitMs + 5000, 24 * 3600_000));
 }
 
@@ -162,7 +162,7 @@ async function consultAgent(targetId: string, question: string, githubToken: str
 export async function GET() {
   const now = Date.now();
   return NextResponse.json({
-    version: 8,
+    version: 9,
     pool: MODEL_POOL.map(m => ({
       id: m.id, model: m.model,
       available: (cooldowns.get(m.id) ?? 0) <= now,
