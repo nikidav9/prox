@@ -207,7 +207,7 @@ export async function POST(req: NextRequest) {
 
     const agentList = AGENTS.map(a => `${a.id} — ${a.name} (${a.role})`).join("\n");
     const systemInstruction = agent.soul
-      + "\n\nПРАВИЛА ОТВЕТА: отвечай КРАТКО (2-4 предложения). Без таблиц, без длинных списков."
+      + "\n\nПРАВИЛА ОТВЕТА (СТРОГО): пиши максимум 1-2 предложения. Никаких вступлений, никаких 'конечно', никаких списков. Только суть."
       + `\n\nДЕЛЕГИРОВАНИЕ ЗАДАЧ: если нужно поставить задачу коллеге, добавь маркер в конце ответа:\n[TASK:agentId:краткое описание задачи]\nПример: [TASK:frontend:Сделать форму регистрации]\nМожно несколько маркеров подряд. Список агентов:\n${agentList}`
       + (hasGithub ? "\n\nУ тебя есть доступ к GitHub через инструменты. Делай сразу, сначала вызывай github_get_user." : "");
 
@@ -234,8 +234,8 @@ export async function POST(req: NextRequest) {
       ]);
     }
 
-    // Race the first 3 available OpenRouter models in parallel — fastest wins
-    const orPool = availableModels().filter(e => e.provider === "openrouter").slice(0, 3);
+    // Race all available OpenRouter models in parallel — fastest wins
+    const orPool = availableModels().filter(e => e.provider === "openrouter");
     if (orPool.length > 0 && process.env.OPENROUTER_API_KEY) {
       const orMessages = [
         { role: "system", content: systemInstruction },
@@ -245,7 +245,7 @@ export async function POST(req: NextRequest) {
       const orTools = buildGroqTools(hasGithub);
       const raceResult = await Promise.any(orPool.map(async (entry) => {
         const controller = new AbortController();
-        const tid = setTimeout(() => controller.abort(), 25_000);
+        const tid = setTimeout(() => controller.abort(), 18_000);
         try {
           const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
@@ -255,7 +255,7 @@ export async function POST(req: NextRequest) {
               "HTTP-Referer": "https://prox-two-zeta.vercel.app",
               "X-Title": "Dev Office",
             },
-            body: JSON.stringify({ model: entry.model, messages: orMessages, max_tokens: 600, tools: orTools, tool_choice: "auto" }),
+            body: JSON.stringify({ model: entry.model, messages: orMessages, max_tokens: 300, tools: orTools, tool_choice: "auto" }),
             signal: controller.signal,
           });
           clearTimeout(tid);
@@ -292,7 +292,7 @@ export async function POST(req: NextRequest) {
             curMessages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(toolResult), name: tc.function.name } as any);
           }
           const controller2 = new AbortController();
-          const tid2 = setTimeout(() => controller2.abort(), 20_000);
+          const tid2 = setTimeout(() => controller2.abort(), 15_000);
           try {
             const res2 = await fetch("https://openrouter.ai/api/v1/chat/completions", {
               method: "POST",

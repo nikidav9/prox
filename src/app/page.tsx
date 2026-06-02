@@ -913,8 +913,8 @@ export default function Home(){
         }
       }
     }catch{
-      setChatHistories(p=>({...p,[agentId]:[...(p[agentId]||[]),{role:"model",text:"⚠️ Ошибка соединения, попробуй ещё раз"}]}));
-      if(ag){ag.state="idle";ag.busy=false;}
+      await autoRetry(20);
+      return;
     }finally{
       sendingRef.current.delete(agentId);
       setSendingIds(s=>{const n=new Set(s);n.delete(agentId);return n;});
