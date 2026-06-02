@@ -175,10 +175,22 @@ async function runGithubTool(name: string, args: Record<string, unknown>, token:
       case "vercel_deploy": {
         const vToken = process.env.VERCEL_TOKEN || "";
         if (!vToken) return { error: "VERCEL_TOKEN not set" };
+        const ghToken = token;
+        const repoFull = String(args.repo ?? args.project_name ?? "prox");
+        const [ghOwner, ghRepo] = repoFull.includes("/") ? repoFull.split("/") : ["nikidav9", repoFull];
+        // Get GitHub repoId (required by Vercel API)
+        let repoId: number | undefined;
+        if (ghToken) {
+          const ghRes = await githubFetch(ghToken, `/repos/${ghOwner}/${ghRepo}`) as Record<string, unknown>;
+          repoId = ghRes.id as number;
+        }
+        const gitSource = repoId
+          ? { type: "github", repoId, ref: args.branch ?? "main" }
+          : { type: "github", org: ghOwner, repo: ghRepo, ref: args.branch ?? "main" };
         const res = await fetch("https://api.vercel.com/v13/deployments", {
           method: "POST",
           headers: { Authorization: `Bearer ${vToken}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ name: args.project_name ?? "prox", gitSource: { type: "github", ref: args.branch ?? "main" } }),
+          body: JSON.stringify({ name: ghRepo, gitSource }),
         });
         return res.json();
       }
