@@ -49,6 +49,16 @@ const CODE_BLOCK = `
 - Tailwind v4 postcss.config.js: { plugins: { '@tailwindcss/postcss': {} } }
 - Решение через инструменты: github_list_files → найди конфликт → github_delete_file → передеплой
 
+ЗАПРЕЩЕНО ДЕЛАТЬ АБСОЛЮТНО (эти ошибки ломают деплой):
+- НЕ создавай файлы с base64 строками вместо кода. Если у тебя нет реального содержимого файла — спроси, не выдумывай
+- НЕ пиши Express Router в Next.js проекте (import Router from 'express', router.get/post). В Next.js только src/app/api/*/route.ts с export async function GET/POST
+- НЕ добавляй src/pages/ или pages/ в проект с src/app/ — это сломает Next.js
+- НЕ импортируй пакеты которых нет в package.json — проверь список зависимостей перед импортом
+- НЕ создавай дублирующие конфиги (next.config.js + next.config.ts вместе — оставь только .ts)
+- НЕ создавай мобильные папки (mobile/, android/, ios/) в Next.js проекте без явной инструкции
+- НЕ создавай blockchain папки без явной инструкции
+- НЕ пиши тесты Playwright/Cypress если нет @playwright/test или cypress в package.json
+
 ЭТАЛОННЫЕ ПАТТЕРНЫ (копируй точно, не выдумывай):
 Next.js API route:
 \`\`\`ts
