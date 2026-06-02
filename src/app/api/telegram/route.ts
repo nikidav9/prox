@@ -61,14 +61,13 @@ export async function POST(req: NextRequest) {
 
 export async function sendTelegram(chatId: string, text: string) {
   if (!BOT_TOKEN || !chatId) return;
-  // Telegram HTML: escape < > &
-  const safe = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-    .replace(/&lt;b&gt;/g, "<b>").replace(/&lt;\/b&gt;/g, "</b>"); // restore our <b> tags
+  // Strip HTML tags, send as plain text to avoid parse failures
+  const plain = text.replace(/<[^>]+>/g, "").trim();
   await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text: safe, parse_mode: "HTML" }),
-  }).catch(() => {});
+    body: JSON.stringify({ chat_id: chatId, text: plain }),
+  }).catch((e) => console.error("[telegram] send error:", e));
 }
 
 export async function getTelegramChatId(): Promise<string> {
