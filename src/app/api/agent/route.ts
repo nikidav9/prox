@@ -686,10 +686,13 @@ export async function POST(req: NextRequest) {
       try { const o = JSON.parse(m[1]); if (o.agentId && o.question) addCall(String(o.agentId), String(o.question)); } catch {}
     }
     // Parse [TASK:agentId:description] markers (explicit delegation format, no tool calls needed)
+    // Collect self-delegations separately so we can forward them to Telegram as user questions
+    const selfDelegations: string[] = [];
     const taskMarkerRe = /\[TASK:([\w-]+):([^\]]+)\]/g;
     let tm: RegExpExecArray | null;
     while ((tm = taskMarkerRe.exec(text)) !== null) {
-      addCall(tm[1], tm[2].trim());
+      if (tm[1] === agentId) selfDelegations.push(tm[2].trim());
+      else addCall(tm[1], tm[2].trim());
     }
 
     if (inlineCalls.length > 0) {
@@ -728,6 +731,10 @@ export async function POST(req: NextRequest) {
     // Strip self-delegation artifacts the model writes as literal text
     text = text.replace(/Задачи поставлены:\s*(?:Lena|pm)[^.]*\.\s*Жду результатов\.?/gi, "").trim();
     text = text.replace(/Поставила задачи:\s*(?:Lena|pm)[^.]*\.?/gi, "").trim();
+    // If text is empty but Lena self-delegated questions — use those questions as the message
+    if (!text && selfDelegations.length > 0) {
+      text = selfDelegations.join("\n");
+    }
     if (!text) text = "Готово.";
 
     const botMsg: ChatMsg = { role: "model", text, ts: Date.now(), ...(githubActions.length ? { githubActions } : {}) };
