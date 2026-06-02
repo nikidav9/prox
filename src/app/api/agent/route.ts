@@ -9,19 +9,38 @@ export const maxDuration = 60;
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
 
-type Provider = "gemini" | "groq";
+type Provider = "gemini" | "groq" | "openrouter";
 interface ModelEntry { id: string; provider: Provider; model: string }
 
 const MODEL_POOL: ModelEntry[] = [
+  // Gemini
   { id: "gemini-2.0-flash",        provider: "gemini", model: "gemini-2.0-flash" },
+  { id: "gemini-2.5-flash",        provider: "gemini", model: "gemini-2.5-flash-preview-05-20" },
   { id: "gemini-1.5-flash",        provider: "gemini", model: "gemini-1.5-flash" },
+  { id: "gemini-1.5-pro",          provider: "gemini", model: "gemini-1.5-pro" },
+  // Groq
   { id: "groq-llama33-70b",        provider: "groq",   model: "llama-3.3-70b-versatile" },
-  { id: "groq-llama31-8b",         provider: "groq",   model: "llama-3.1-8b-instant" },
-  { id: "groq-gemma2-9b",          provider: "groq",   model: "gemma2-9b-it" },
-  { id: "groq-deepseek-70b",       provider: "groq",   model: "deepseek-r1-distill-llama-70b" },
-  { id: "groq-qwen-32b",           provider: "groq",   model: "qwen-qwq-32b" },
-  { id: "groq-llama3-70b",         provider: "groq",   model: "llama3-70b-8192" },
   { id: "groq-llama31-70b",        provider: "groq",   model: "llama-3.1-70b-versatile" },
+  { id: "groq-llama3-70b",         provider: "groq",   model: "llama3-70b-8192" },
+  { id: "groq-deepseek-70b",       provider: "groq",   model: "deepseek-r1-distill-llama-70b" },
+  { id: "groq-deepseek-qwen32b",   provider: "groq",   model: "deepseek-r1-distill-qwen-32b" },
+  { id: "groq-qwen-32b",           provider: "groq",   model: "qwen-qwq-32b" },
+  { id: "groq-mixtral-8x7b",       provider: "groq",   model: "mixtral-8x7b-32768" },
+  { id: "groq-gemma2-9b",          provider: "groq",   model: "gemma2-9b-it" },
+  { id: "groq-gemma-7b",           provider: "groq",   model: "gemma-7b-it" },
+  { id: "groq-llama31-8b",         provider: "groq",   model: "llama-3.1-8b-instant" },
+  { id: "groq-llama3-8b",          provider: "groq",   model: "llama3-8b-8192" },
+  { id: "groq-llama32-3b",         provider: "groq",   model: "llama-3.2-3b-preview" },
+  { id: "groq-llama32-1b",         provider: "groq",   model: "llama-3.2-1b-preview" },
+  // OpenRouter (free models)
+  { id: "or-llama33-70b",          provider: "openrouter", model: "meta-llama/llama-3.3-70b-instruct:free" },
+  { id: "or-deepseek-r1",          provider: "openrouter", model: "deepseek/deepseek-r1:free" },
+  { id: "or-deepseek-v3",          provider: "openrouter", model: "deepseek/deepseek-chat-v3-0324:free" },
+  { id: "or-qwen25-72b",           provider: "openrouter", model: "qwen/qwen-2.5-72b-instruct:free" },
+  { id: "or-mistral-7b",           provider: "openrouter", model: "mistralai/mistral-7b-instruct:free" },
+  { id: "or-gemma2-9b",            provider: "openrouter", model: "google/gemma-2-9b-it:free" },
+  { id: "or-phi4",                 provider: "openrouter", model: "microsoft/phi-4:free" },
+  { id: "or-llama32-11b",          provider: "openrouter", model: "meta-llama/llama-3.2-11b-vision-instruct:free" },
 ];
 
 const cooldowns = new Map<string, number>();
@@ -162,13 +181,14 @@ async function consultAgent(targetId: string, question: string, githubToken: str
 export async function GET() {
   const now = Date.now();
   return NextResponse.json({
-    version: 9,
+    version: 10,
     pool: MODEL_POOL.map(m => ({
-      id: m.id, model: m.model,
+      id: m.id, model: m.model, provider: m.provider,
       available: (cooldowns.get(m.id) ?? 0) <= now,
       cooldownUntil: cooldowns.get(m.id) ? new Date(cooldowns.get(m.id)!).toISOString() : null,
     })),
     groqConfigured: !!groq,
+    openrouterConfigured: !!process.env.OPENROUTER_API_KEY,
   });
 }
 
@@ -202,7 +222,6 @@ export async function POST(req: NextRequest) {
     let lastError = "";
     let usedProvider = "";
 
-    // Per-model timeout to prevent Vercel 60s limit: 18s Gemini, 12s Groq
     function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
       return Promise.race([
         promise,
@@ -280,6 +299,28 @@ export async function POST(req: NextRequest) {
               groqMessages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(toolResult) });
             }
           }
+          usedProvider = entry.id;
+          break;
+
+        } else if (entry.provider === "openrouter" && process.env.OPENROUTER_API_KEY) {
+          const orMessages = [
+            { role: "system", content: systemInstruction },
+            ...groqHistory,
+            { role: "user", content: message },
+          ];
+          const orRes = await withTimeout(fetch("https://openrouter.ai/api/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+              "Content-Type": "application/json",
+              "HTTP-Referer": "https://gemini-agents-mocha.vercel.app",
+              "X-Title": "Dev Office",
+            },
+            body: JSON.stringify({ model: entry.model, messages: orMessages, max_tokens: 1024 }),
+          }), modelTimeout);
+          const orData = await orRes.json() as { choices?: {message:{content:string}}[]; error?: {message:string} };
+          if (orData.error) throw new Error(orData.error.message);
+          text = orData.choices?.[0]?.message?.content || "Нет ответа";
           usedProvider = entry.id;
           break;
         }
