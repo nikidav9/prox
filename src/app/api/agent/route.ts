@@ -9,20 +9,20 @@ export const maxDuration = 60;
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
 
-// ── Model pool ────────────────────────────────────────────────────────────────
+// ── Model pool ────────────────────────────────────────────────────────────────────────────
 type Provider = "gemini" | "groq";
 interface ModelEntry { id: string; provider: Provider; model: string }
 
 const MODEL_POOL: ModelEntry[] = [
-  { id: "gemini-2.0-flash",   provider: "gemini", model: "gemini-2.0-flash" },
-  { id: "gemini-1.5-flash",   provider: "gemini", model: "gemini-1.5-flash" },
-  { id: "groq-llama33-70b",   provider: "groq",   model: "llama-3.3-70b-versatile" },
-  { id: "groq-llama31-8b",    provider: "groq",   model: "llama-3.1-8b-instant" },
-  { id: "groq-gemma2-9b",     provider: "groq",   model: "gemma2-9b-it" },
-  { id: "groq-deepseek-70b",  provider: "groq",   model: "deepseek-r1-distill-llama-70b" },
-  { id: "groq-qwen-32b",      provider: "groq",   model: "qwen-qwq-32b" },
-  { id: "groq-llama3-70b",    provider: "groq",   model: "llama3-70b-8192" },
-  { id: "groq-llama31-70b",   provider: "groq",   model: "llama-3.1-70b-versatile" },
+  { id: "gemini-2.0-flash",        provider: "gemini", model: "gemini-2.0-flash" },
+  { id: "gemini-1.5-flash",        provider: "gemini", model: "gemini-1.5-flash" },
+  { id: "groq-llama33-70b",        provider: "groq",   model: "llama-3.3-70b-versatile" },
+  { id: "groq-llama31-8b",         provider: "groq",   model: "llama-3.1-8b-instant" },
+  { id: "groq-gemma2-9b",          provider: "groq",   model: "gemma2-9b-it" },
+  { id: "groq-deepseek-70b",       provider: "groq",   model: "deepseek-r1-distill-llama-70b" },
+  { id: "groq-qwen-32b",           provider: "groq",   model: "qwen-qwq-32b" },
+  { id: "groq-llama3-70b",         provider: "groq",   model: "llama3-70b-8192" },
+  { id: "groq-llama31-70b",        provider: "groq",   model: "llama-3.1-70b-versatile" },
 ];
 
 const cooldowns = new Map<string, number>();
@@ -42,7 +42,7 @@ function markCooled(id: string, msg: string) {
   cooldowns.set(id, Date.now() + Math.min(waitMs + 5000, 24 * 3600_000));
 }
 
-// ── Context compression ───────────────────────────────────────────────────────
+// ── Context compression ────────────────────────────────────────────────────────────────────
 const KEEP_RECENT = 4;
 const COMPRESS_AT = 12;
 
@@ -69,7 +69,7 @@ async function compressHistory(messages: ChatMsg[]): Promise<ChatMsg[]> {
   }
 }
 
-// ── GitHub helpers ────────────────────────────────────────────────────────────
+// ── GitHub helpers ────────────────────────────────────────────────────────────────────────────
 async function githubFetch(token: string, path: string, method = "GET", body?: object) {
   const res = await fetch(`https://api.github.com${path}`, {
     method,
@@ -114,7 +114,7 @@ async function runGithubTool(name: string, args: Record<string, unknown>, token:
   } catch (err) { return { error: String(err) }; }
 }
 
-// ── Gemini tool definitions ───────────────────────────────────────────────────
+// ── Gemini tool definitions ───────────────────────────────────────────────────────────────────────────
 const GITHUB_TOOLS: Tool[] = [{
   functionDeclarations: [
     { name: "github_get_user", description: "Get the authenticated GitHub user info", parameters: { type: SchemaType.OBJECT, properties: {} } },
@@ -166,7 +166,7 @@ async function consultAgent(targetId: string, question: string, githubToken: str
 export async function GET() {
   const now = Date.now();
   return NextResponse.json({
-    version: 6,
+    version: 7,
     pool: MODEL_POOL.map(m => ({
       id: m.id, model: m.model,
       available: (cooldowns.get(m.id) ?? 0) <= now,
@@ -216,7 +216,7 @@ export async function POST(req: NextRequest) {
           const chat = gModel.startChat({
             history: trimmedHistory.map(msg => ({ role: msg.role, parts: [{ text: msg.text }] })),
           });
-          // No retries — fail fast and move to next model
+          // Fail fast — no retries, move to next model on any error
           let result = await chat.sendMessage(message, { generationConfig: { maxOutputTokens: 800 } } as never);
           for (let i = 0; i < 8; i++) {
             const parts = result.response.candidates?.[0]?.content?.parts ?? [];
