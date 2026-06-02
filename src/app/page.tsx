@@ -852,7 +852,8 @@ export default function Home(){
     try{
       const res=await fetch("/api/agent",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({message:msg,agentId,history:apiHistory,githubToken})});
-      const data=await res.json();
+      let data:Record<string,unknown>;
+      try{data=await res.json();}catch{data={error:`HTTP ${res.status}`};}
       if(res.status===429&&data.retryAfter){
         await autoRetry(Math.min(data.retryAfter,120));
         return;
@@ -964,7 +965,7 @@ export default function Home(){
         <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",padding:4}}>
           <canvas ref={canvasRef} width={W} height={H} onClick={handleCanvasClick}
             style={{maxWidth:"100%",maxHeight:"100%",imageRendering:"pixelated",cursor:"crosshair",
-              border:"3px solid #3a3010",boxShadow:"0 0 20px rgba(0,0,0,0.5)"}}/>
+              border:"3px solid #3a3010",boxShadow:"0 0 20px rgba(0,0,0,0.5);"}}/>
         </div>
         {showTeamChat&&(
           <div style={{width:340,display:"flex",flexDirection:"column",background:"#120a1e",borderLeft:"3px solid #5a3a8a",flexShrink:0}}>
