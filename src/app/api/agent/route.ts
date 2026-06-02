@@ -429,7 +429,7 @@ export async function POST(req: NextRequest) {
         : "\n\nGITHUB — ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА:\n1. Репо указано в задаче (формат nikidav9/repo). Никогда не создавай новые репо.\n2. Сразу вызывай github_create_or_update_file для КАЖДОГО файла.\n3. Пиши ТОЛЬКО реальный код (.ts/.tsx/.py/.css/конфиги). README не нужен.\n4. Минимум 2 файла с полным рабочим кодом, не заглушками.")
       : "";
     const selfDelegateWarning = agentId === "pm"
-      ? "\n\n⚠️ ЗАПРЕЩЕНО: никогда не используй [TASK:pm:...] — нельзя делегировать самой себе. Это создаёт бесконечный цикл."
+      ? "\n\n⚠️ ЗАПРЕЩЕНО (АБСОЛЮТНО):\n- Никогда [TASK:pm:...] — ты не можешь ставить задачи самой себе\n- Никогда не пиши фразу 'Задачи поставлены: Lena'\n- Если нужна инфа — спроси пользователя напрямую: «Создатель, [вопрос]?»\n- Если знаешь что делать — делай сразу через инструменты (github_*, vercel_*, http_request)"
       : "";
     // Tell all agents they already have GitHub/API access — no need to ask for tokens or collaborator access
     const accessInfo = hasGithub
@@ -725,6 +725,9 @@ export async function POST(req: NextRequest) {
 
     // Always strip any leftover [TASK:] markers from saved text
     text = text.replace(/\[TASK:[\w-]+:[^\]]+\]\s*/g, "").trim();
+    // Strip self-delegation artifacts the model writes as literal text
+    text = text.replace(/Задачи поставлены:\s*(?:Lena|pm)[^.]*\.\s*Жду результатов\.?/gi, "").trim();
+    text = text.replace(/Поставила задачи:\s*(?:Lena|pm)[^.]*\.?/gi, "").trim();
     if (!text) text = "Готово.";
 
     const botMsg: ChatMsg = { role: "model", text, ts: Date.now(), ...(githubActions.length ? { githubActions } : {}) };
