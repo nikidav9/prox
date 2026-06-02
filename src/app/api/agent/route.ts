@@ -187,10 +187,18 @@ async function runGithubTool(name: string, args: Record<string, unknown>, token:
         const gitSource = repoId
           ? { type: "github", repoId, ref: args.branch ?? "main" }
           : { type: "github", org: ghOwner, repo: ghRepo, ref: args.branch ?? "main" };
+        const projectSettings = {
+          framework: (args.framework as string) ?? "nextjs",
+          buildCommand: (args.build_command as string) ?? null,
+          installCommand: null,
+          outputDirectory: null,
+          rootDirectory: (args.root_directory as string) ?? null,
+          devCommand: null,
+        };
         const res = await fetch("https://api.vercel.com/v13/deployments", {
           method: "POST",
           headers: { Authorization: `Bearer ${vToken}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ name: ghRepo, gitSource }),
+          body: JSON.stringify({ name: ghRepo, gitSource, projectSettings }),
         });
         return res.json();
       }
