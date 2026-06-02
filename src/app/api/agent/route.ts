@@ -504,14 +504,19 @@ export async function POST(req: NextRequest) {
     }
 
     if (inlineCalls.length > 0) {
-      // Save tasks directly to agents' Supabase histories as user messages.
-      // The frontend auto-resumes chats that end with a user message, so the agents will respond naturally.
       await Promise.all(inlineCalls.map(async ({ agentId: tId, question }) => {
+        // Add "report back to pm when done" instruction for non-pm agents
+        const taskWithCallback = agentId !== "pm" && tId !== "pm"
+          ? question
+          : question;
+        // If PM assigned this task, tell the target agent to report back
+        const finalTask = agentId === "pm"
+          ? `${question}\n\nКогда выполнишь — добавь [TASK:pm:Готово: краткий итог что сделал]`
+          : question;
         const existing = await loadHistory(tId);
-        await saveHistory(tId, [...existing, { role: "user", text: question }]);
-        githubActions.push(`👥 ${tId}: ${question.slice(0, 100)}`);
+        await saveHistory(tId, [...existing, { role: "user", text: finalTask }]);
+        githubActions.push(`👥 ${tId}: ${taskWithCallback.slice(0, 100)}`);
       }));
-      // Strip all agent-call syntax from displayed text
       text = text
         .replace(/\[TASK:[\w-]+:[^\]]+\]\s*/g, "")
         .replace(/consult_agent\s*\([^)]*\)\s*/g, "")
@@ -519,7 +524,17 @@ export async function POST(req: NextRequest) {
         .replace(/<\/function>\s*/g, "")
         .replace(/\n{3,}/g, "\n\n")
         .trim();
+      // If text became empty after stripping markers, generate a confirmation
+      if (!text && inlineCalls.length > 0) {
+        const names = inlineCalls.map(c => {
+          const a = AGENTS.find(x => x.id === c.agentId);
+          return a ? a.name : c.agentId;
+        });
+        text = `Задачи поставлены: ${names.join(", ")}. Жду результатов.`;
+      }
     }
+
+    if (!text) text = "Готово.";
 
     const botMsg: ChatMsg = { role: "model", text, ts: Date.now(), ...(githubActions.length ? { githubActions } : {}) };
     await saveHistory(agentId, [...compressedHistory, userMsg, botMsg]);
