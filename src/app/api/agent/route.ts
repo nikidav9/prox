@@ -9,7 +9,6 @@ export const maxDuration = 60;
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
 
-// ── Model pool ────────────────────────────────────────────────────────────────────────────
 type Provider = "gemini" | "groq";
 interface ModelEntry { id: string; provider: Provider; model: string }
 
@@ -42,7 +41,6 @@ function markCooled(id: string, msg: string) {
   cooldowns.set(id, Date.now() + Math.min(waitMs + 5000, 24 * 3600_000));
 }
 
-// ── Context compression ────────────────────────────────────────────────────────────────────
 const KEEP_RECENT = 4;
 const COMPRESS_AT = 12;
 
@@ -69,7 +67,6 @@ async function compressHistory(messages: ChatMsg[]): Promise<ChatMsg[]> {
   }
 }
 
-// ── GitHub helpers ────────────────────────────────────────────────────────────────────────────
 async function githubFetch(token: string, path: string, method = "GET", body?: object) {
   const res = await fetch(`https://api.github.com${path}`, {
     method,
@@ -114,7 +111,6 @@ async function runGithubTool(name: string, args: Record<string, unknown>, token:
   } catch (err) { return { error: String(err) }; }
 }
 
-// ── Gemini tool definitions ───────────────────────────────────────────────────────────────────────────
 const GITHUB_TOOLS: Tool[] = [{
   functionDeclarations: [
     { name: "github_get_user", description: "Get the authenticated GitHub user info", parameters: { type: SchemaType.OBJECT, properties: {} } },
@@ -166,7 +162,7 @@ async function consultAgent(targetId: string, question: string, githubToken: str
 export async function GET() {
   const now = Date.now();
   return NextResponse.json({
-    version: 7,
+    version: 8,
     pool: MODEL_POOL.map(m => ({
       id: m.id, model: m.model,
       available: (cooldowns.get(m.id) ?? 0) <= now,
@@ -206,7 +202,16 @@ export async function POST(req: NextRequest) {
     let lastError = "";
     let usedProvider = "";
 
+    // Per-model timeout to prevent Vercel 60s limit: 18s Gemini, 12s Groq
+    function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+      return Promise.race([
+        promise,
+        new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms)),
+      ]);
+    }
+
     for (const entry of availableModels()) {
+      const modelTimeout = entry.provider === "gemini" ? 18_000 : 12_000;
       try {
         if (entry.provider === "gemini") {
           const gModel = genAI.getGenerativeModel({
@@ -216,8 +221,10 @@ export async function POST(req: NextRequest) {
           const chat = gModel.startChat({
             history: trimmedHistory.map(msg => ({ role: msg.role, parts: [{ text: msg.text }] })),
           });
-          // Fail fast — no retries, move to next model on any error
-          let result = await chat.sendMessage(message, { generationConfig: { maxOutputTokens: 800 } } as never);
+          let result = await withTimeout(
+            chat.sendMessage(message, { generationConfig: { maxOutputTokens: 800 } } as never),
+            modelTimeout
+          );
           for (let i = 0; i < 8; i++) {
             const parts = result.response.candidates?.[0]?.content?.parts ?? [];
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -230,7 +237,10 @@ export async function POST(req: NextRequest) {
               githubActions.push(`${fc.name}: ${JSON.stringify(toolResult).slice(0, 150)}`);
               return { functionResponse: { name: fc.name, response: toolResult } };
             }));
-            result = await chat.sendMessage(responses as Parameters<typeof chat.sendMessage>[0], { generationConfig: { maxOutputTokens: 800 } } as never);
+            result = await withTimeout(
+              chat.sendMessage(responses as Parameters<typeof chat.sendMessage>[0], { generationConfig: { maxOutputTokens: 800 } } as never),
+              modelTimeout
+            );
           }
           text = result.response.text();
           usedProvider = entry.id;
@@ -245,10 +255,10 @@ export async function POST(req: NextRequest) {
           const groqTools = buildGroqTools(hasGithub);
 
           for (let round = 0; round < 6; round++) {
-            const groqRes = await groq.chat.completions.create({
+            const groqRes = await withTimeout(groq.chat.completions.create({
               model: entry.model, messages: groqMessages,
               max_tokens: 1024, tools: groqTools, tool_choice: "auto",
-            });
+            }), modelTimeout);
             const choice = groqRes.choices[0];
             const msg = choice.message;
             groqMessages.push(msg as Groq.Chat.ChatCompletionMessageParam);
