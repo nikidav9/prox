@@ -8,22 +8,48 @@ export const maxDuration = 60;
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
+const cerebrasKey = process.env.CEREBRAS_API_KEY || "";
 
-type Provider = "gemini" | "groq" | "openrouter";
+type Provider = "gemini" | "groq" | "openrouter" | "cerebras";
 interface ModelEntry { id: string; provider: Provider; model: string }
 
 const MODEL_POOL: ModelEntry[] = [
-  // OpenRouter first — reliable free tier, good tool-call support
+  // ── OpenRouter (20 free models) ──────────────────────────────────────
+  { id: "or-llama4-maverick",      provider: "openrouter", model: "meta-llama/llama-4-maverick:free" },
+  { id: "or-llama4-scout",         provider: "openrouter", model: "meta-llama/llama-4-scout:free" },
+  { id: "or-deepseek-v3",          provider: "openrouter", model: "deepseek/deepseek-v3-0324:free" },
+  { id: "or-deepseek-r1",          provider: "openrouter", model: "deepseek/deepseek-r1:free" },
+  { id: "or-qwen3-235b",           provider: "openrouter", model: "qwen/qwen3-235b-a22b:free" },
+  { id: "or-qwen3-30b",            provider: "openrouter", model: "qwen/qwen3-30b-a3b:free" },
+  { id: "or-kimi-k2",              provider: "openrouter", model: "moonshotai/kimi-k2:free" },
   { id: "or-gpt-oss-120b",         provider: "openrouter", model: "openai/gpt-oss-120b:free" },
   { id: "or-llama33-70b",          provider: "openrouter", model: "meta-llama/llama-3.3-70b-instruct:free" },
-  { id: "or-gemma4-31b",           provider: "openrouter", model: "google/gemma-4-31b-it:free" },
-  { id: "or-nemotron-120b",        provider: "openrouter", model: "nvidia/nemotron-3-super-120b-a12b:free" },
   { id: "or-hermes-405b",          provider: "openrouter", model: "nousresearch/hermes-3-llama-3.1-405b:free" },
-  // Groq — fast when quota available
+  { id: "or-gemma4-31b",           provider: "openrouter", model: "google/gemma-4-31b-it:free" },
+  { id: "or-gemma3-27b",           provider: "openrouter", model: "google/gemma-3-27b-it:free" },
+  { id: "or-mistral-small",        provider: "openrouter", model: "mistralai/mistral-small-3.2-24b-instruct:free" },
+  { id: "or-mai-ds-r1",            provider: "openrouter", model: "microsoft/mai-ds-r1:free" },
+  { id: "or-nemotron-120b",        provider: "openrouter", model: "nvidia/nemotron-3-super-120b-a12b:free" },
+  { id: "or-deepseek-r1-llama",    provider: "openrouter", model: "deepseek/deepseek-r1-distill-llama-70b:free" },
+  { id: "or-chimera",              provider: "openrouter", model: "tngtech/deepseek-r1t-chimera:free" },
+  { id: "or-glm4-32b",             provider: "openrouter", model: "thudm/glm-4-32b:free" },
+  { id: "or-qwen3-14b",            provider: "openrouter", model: "qwen/qwen3-14b:free" },
+  { id: "or-llama31-405b",         provider: "openrouter", model: "meta-llama/llama-3.1-405b-instruct:free" },
+  // ── Cerebras (ultra-fast, generous free limits) ──────────────────────
+  { id: "cb-llama4-scout",         provider: "cerebras",   model: "llama-4-scout-17b-16e-instruct" },
+  { id: "cb-llama33-70b",          provider: "cerebras",   model: "llama-3.3-70b" },
+  { id: "cb-llama31-70b",          provider: "cerebras",   model: "llama3.1-70b" },
+  { id: "cb-qwen3-32b",            provider: "cerebras",   model: "qwen-3-32b" },
+  // ── Groq (fast, daily quota) ─────────────────────────────────────────
+  { id: "groq-llama4-maverick",    provider: "groq",   model: "meta-llama/llama-4-maverick-17b-128e-instruct" },
+  { id: "groq-llama4-scout",       provider: "groq",   model: "meta-llama/llama-4-scout-17b-16e-instruct" },
   { id: "groq-llama33-70b",        provider: "groq",   model: "llama-3.3-70b-versatile" },
   { id: "groq-llama3-70b",         provider: "groq",   model: "llama3-70b-8192" },
-  { id: "groq-mixtral-8x7b",       provider: "groq",   model: "mixtral-8x7b-32768" },
-  // Gemini last — quota exhausts quickly
+  { id: "groq-deepseek-r1",        provider: "groq",   model: "deepseek-r1-distill-llama-70b" },
+  { id: "groq-qwq-32b",            provider: "groq",   model: "qwen-qwq-32b" },
+  { id: "groq-mixtral",            provider: "groq",   model: "mixtral-8x7b-32768" },
+  { id: "groq-gemma2",             provider: "groq",   model: "gemma2-9b-it" },
+  // ── Gemini (last resort) ─────────────────────────────────────────────
   { id: "gemini-2.0-flash",        provider: "gemini", model: "gemini-2.0-flash" },
   { id: "gemini-2.5-flash",        provider: "gemini", model: "gemini-2.5-flash-preview-05-20" },
 ];
@@ -38,16 +64,17 @@ function availableModels(): ModelEntry[] {
 function markCooled(id: string, msg: string) {
   const secMatch = msg.match(/try again in ([\d.]+)s/i) || msg.match(/retry in ([\d.]+)s/i);
   const minMatch = msg.match(/try again in (\d+)m/i);
+  const isQuota = msg.includes("quota") || msg.includes("429") || msg.includes("rate") || msg.includes("limit");
   const waitMs = secMatch
     ? Math.ceil(parseFloat(secMatch[1]) * 1000)
     : minMatch ? parseInt(minMatch[1]) * 60_000
-    : 60_000;
+    : isQuota ? 120_000 : 30_000;
   const until = Date.now() + Math.min(waitMs + 5000, 24 * 3600_000);
   cooldowns.set(id, until);
-  // If any Gemini model fails (quota/timeout), cool all Gemini models together
+  // Cool all models of same provider on quota errors (they share quota)
   const entry = MODEL_POOL.find(m => m.id === id);
-  if (entry?.provider === "gemini") {
-    MODEL_POOL.filter(m => m.provider === "gemini").forEach(m => cooldowns.set(m.id, until));
+  if (entry && isQuota && (entry.provider === "gemini" || entry.provider === "cerebras")) {
+    MODEL_POOL.filter(m => m.provider === entry.provider).forEach(m => cooldowns.set(m.id, until));
   }
 }
 
@@ -192,6 +219,7 @@ export async function GET() {
     })),
     groqConfigured: !!groq,
     openrouterConfigured: !!process.env.OPENROUTER_API_KEY,
+    cerebrasConfigured: !!cerebrasKey,
   });
 }
 
@@ -240,40 +268,61 @@ export async function POST(req: NextRequest) {
       ]);
     }
 
-    // Race all available OpenRouter models in parallel — fastest wins
-    const orPool = availableModels().filter(e => e.provider === "openrouter");
-    if (orPool.length > 0 && process.env.OPENROUTER_API_KEY) {
-      const orMessages = [
-        { role: "system", content: systemInstruction },
-        ...groqHistory,
-        { role: "user", content: message },
-      ];
-      const orTools = buildGroqTools(hasGithub);
-      const raceResult = await Promise.any(orPool.map(async (entry) => {
-        const controller = new AbortController();
-        const tid = setTimeout(() => controller.abort(), 18_000);
-        try {
-          const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-              "Content-Type": "application/json",
-              "HTTP-Referer": "https://prox-two-zeta.vercel.app",
-              "X-Title": "Dev Office",
-            },
-            body: JSON.stringify({ model: entry.model, messages: orMessages, max_tokens: 300, tools: orTools, tool_choice: "auto" }),
-            signal: controller.signal,
-          });
-          clearTimeout(tid);
-          const data = await res.json() as { choices?: { message: { content: string | null; tool_calls?: { id: string; function: { name: string; arguments: string } }[] } }[]; error?: { message: string } };
-          if (data.error) throw new Error(data.error.message);
-          const msg = data.choices?.[0]?.message;
-          if (!msg) throw new Error("Empty");
-          return { msg, entry, orMessages: [...orMessages] };
-        } finally {
-          clearTimeout(tid);
-        }
-      })).catch(() => null);
+    // Build shared message format for OR/Groq/Cerebras
+    const chatMessages = [
+      { role: "system", content: systemInstruction },
+      ...groqHistory,
+      { role: "user", content: message },
+    ];
+    const chatTools = buildGroqTools(hasGithub);
+
+    // Helper: call any OpenAI-compatible endpoint
+    async function callOpenAICompat(
+      url: string, authHeader: string, entry: ModelEntry,
+      messages: object[], tools: object[], timeoutMs: number, extraHeaders?: Record<string,string>
+    ) {
+      const controller = new AbortController();
+      const tid = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Authorization": authHeader, "Content-Type": "application/json", ...extraHeaders },
+          body: JSON.stringify({ model: entry.model, messages, max_tokens: 400, tools, tool_choice: "auto" }),
+          signal: controller.signal,
+        });
+        clearTimeout(tid);
+        const data = await res.json() as { choices?: { message: { content: string | null; tool_calls?: { id: string; function: { name: string; arguments: string } }[] } }[]; error?: { message: string } };
+        if (data.error) throw new Error(data.error.message);
+        const msg = data.choices?.[0]?.message;
+        if (!msg?.content && !msg?.tool_calls?.length) throw new Error("Empty response");
+        return { msg, entry };
+      } finally { clearTimeout(tid); }
+    }
+
+    // Race OpenRouter + Cerebras together — all available, fastest wins
+    const racePool = availableModels().filter(e => e.provider === "openrouter" || e.provider === "cerebras");
+    const raceResult = racePool.length > 0 ? await Promise.any(racePool.map(entry => {
+      if (entry.provider === "openrouter" && process.env.OPENROUTER_API_KEY) {
+        return callOpenAICompat(
+          "https://openrouter.ai/api/v1/chat/completions",
+          `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          entry, chatMessages, chatTools, 18_000,
+          { "HTTP-Referer": "https://prox-two-zeta.vercel.app", "X-Title": "Dev Office" }
+        );
+      }
+      if (entry.provider === "cerebras" && cerebrasKey) {
+        return callOpenAICompat(
+          "https://api.cerebras.ai/v1/chat/completions",
+          `Bearer ${cerebrasKey}`,
+          entry, chatMessages, chatTools, 12_000
+        );
+      }
+      return Promise.reject("no key");
+    })).catch(() => null) : null;
+
+    const orMessages = chatMessages;
+    const orTools = chatTools;
+    if (racePool.length > 0) {
 
       if (raceResult) {
         const { msg, entry } = raceResult;
@@ -297,31 +346,28 @@ export async function POST(req: NextRequest) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             curMessages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(toolResult), name: tc.function.name } as any);
           }
-          const controller2 = new AbortController();
-          const tid2 = setTimeout(() => controller2.abort(), 15_000);
           try {
-            const res2 = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-              method: "POST",
-              headers: { "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`, "Content-Type": "application/json", "HTTP-Referer": "https://prox-two-zeta.vercel.app", "X-Title": "Dev Office" },
-              body: JSON.stringify({ model: entry.model, messages: curMessages, max_tokens: 600, tools: orTools, tool_choice: "auto" }),
-              signal: controller2.signal,
-            });
-            clearTimeout(tid2);
-            const d2 = await res2.json() as { choices?: { message: { content: string | null; tool_calls?: { id: string; function: { name: string; arguments: string } }[] } }[]; error?: { message: string } };
-            if (d2.error) break;
-            curMsg = d2.choices?.[0]?.message ?? { content: "", tool_calls: [] };
-          } catch { clearTimeout(tid2); break; }
+            const followUrl = entry.provider === "cerebras"
+              ? "https://api.cerebras.ai/v1/chat/completions"
+              : "https://openrouter.ai/api/v1/chat/completions";
+            const followAuth = entry.provider === "cerebras"
+              ? `Bearer ${cerebrasKey}`
+              : `Bearer ${process.env.OPENROUTER_API_KEY}`;
+            const followExtra: Record<string,string> = entry.provider === "openrouter"
+              ? { "HTTP-Referer": "https://prox-two-zeta.vercel.app", "X-Title": "Dev Office" } : {};
+            const r2 = await callOpenAICompat(followUrl, followAuth, entry, curMessages, orTools, 15_000, followExtra);
+            curMsg = r2.msg;
+          } catch { break; }
         }
         text = curMsg.content || "";
         usedProvider = entry.id;
       } else {
-        // All OR models failed — mark them cooled
-        orPool.forEach(e => markCooled(e.id, "race failed"));
+        racePool.forEach(e => markCooled(e.id, "race failed"));
       }
     }
 
-    // Fallback: sequential Groq / Gemini if OR race didn't produce text
-    const fallbackPool = text ? [] : availableModels().filter(e => e.provider !== "openrouter");
+    // Fallback: sequential Groq / Gemini if race didn't produce text
+    const fallbackPool = text ? [] : availableModels().filter(e => e.provider !== "openrouter" && e.provider !== "cerebras");
     for (const entry of fallbackPool) {
       const modelTimeout = entry.provider === "gemini" ? 10_000 : 8_000;
       try {
