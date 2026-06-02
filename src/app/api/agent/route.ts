@@ -3,6 +3,7 @@ import Groq from "groq-sdk";
 import { NextRequest, NextResponse } from "next/server";
 import { AGENTS } from "@/lib/agents";
 import { loadHistory, saveHistory, ChatMsg } from "@/lib/supabase";
+import { sendTelegram, getTelegramChatId } from "@/app/api/telegram/route";
 
 export const maxDuration = 60;
 
@@ -516,6 +517,12 @@ export async function POST(req: NextRequest) {
 
     const botMsg: ChatMsg = { role: "model", text, ts: Date.now(), ...(githubActions.length ? { githubActions } : {}) };
     await saveHistory(agentId, [...compressedHistory, userMsg, botMsg]);
+
+    // If Lena is addressing the Creator — send to Telegram
+    if (agentId === "pm" && text.includes("Создатель")) {
+      const chatId = await getTelegramChatId();
+      if (chatId) await sendTelegram(chatId, `💬 <b>Лена:</b>\n${text}`);
+    }
 
     return NextResponse.json({
       text, agentName: agent.name,
