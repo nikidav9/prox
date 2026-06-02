@@ -27,11 +27,7 @@ const MODEL_POOL: ModelEntry[] = [
   { id: "groq-qwen-32b",           provider: "groq",   model: "qwen-qwq-32b" },
   { id: "groq-mixtral-8x7b",       provider: "groq",   model: "mixtral-8x7b-32768" },
   { id: "groq-gemma2-9b",          provider: "groq",   model: "gemma2-9b-it" },
-  { id: "groq-gemma-7b",           provider: "groq",   model: "gemma-7b-it" },
-  { id: "groq-llama31-8b",         provider: "groq",   model: "llama-3.1-8b-instant" },
-  { id: "groq-llama3-8b",          provider: "groq",   model: "llama3-8b-8192" },
-  { id: "groq-llama32-3b",         provider: "groq",   model: "llama-3.2-3b-preview" },
-  { id: "groq-llama32-1b",         provider: "groq",   model: "llama-3.2-1b-preview" },
+  // Small models omitted — poor tool-call compliance
   // OpenRouter (бесплатные модели — актуальный список)
   { id: "or-gpt-oss-120b",         provider: "openrouter", model: "openai/gpt-oss-120b:free" },
   { id: "or-gemma4-31b",           provider: "openrouter", model: "google/gemma-4-31b-it:free" },
@@ -173,12 +169,16 @@ async function consultAgent(targetId: string, question: string, githubToken: str
   const target = AGENTS.find(a => a.id === targetId);
   if (!target) return `[агент не найден: ${targetId}. Доступные id: ${AGENTS.map(a=>a.id).join(", ")}]`;
   try {
-    const baseUrl = process.env.APP_URL || "https://gemini-agents-mocha.vercel.app";
+    const baseUrl = process.env.APP_URL || "https://prox-two-zeta.vercel.app";
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 28_000);
     const res = await fetch(`${baseUrl}/api/agent`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: question, agentId: targetId, history: [], githubToken, _depth: depth + 1 }),
+      signal: controller.signal,
     });
+    clearTimeout(tid);
     const data = await res.json();
     return data.text || "[нет ответа]";
   } catch (e) {
@@ -382,6 +382,40 @@ export async function POST(req: NextRequest) {
         ? "Все модели на перерыве (лимиты квот), попробуйте через несколько минут."
         : `Не удалось получить ответ. Последняя ошибка: ${lastError.slice(0, 200)}`;
       return NextResponse.json({ error: errorMsg }, { status: 429 });
+    }
+
+    // Some models write consult_agent as plain text in various formats.
+    // Detect and execute them, then clean the output.
+    const inlineCalls: { agentId: string; question: string }[] = [];
+    const seenCalls = new Set<string>();
+    const addCall = (aid: string, q: string) => {
+      const key = `${aid}:${q}`;
+      if (!seenCalls.has(key) && AGENTS.find(a=>a.id===aid)) { seenCalls.add(key); inlineCalls.push({ agentId: aid, question: q }); }
+    };
+    // Format 1: consult_agent(id, "q") | consult_agent(id="q")
+    const re1 = /consult_agent\s*\(\s*["']?([\w-]+)["']?\s*[=,]\s*["'`]?([\s\S]+?)["'`]?\s*\)/g;
+    let m: RegExpExecArray | null;
+    while ((m = re1.exec(text)) !== null) addCall(m[1], m[2]);
+    // Format 2: function=consult_agent>{"agentId":"...","question":"..."}
+    const re2 = /(?:function=consult_agent|consult_agent)[>\s]*(\{[^}]+\})/g;
+    while ((m = re2.exec(text)) !== null) {
+      try { const o = JSON.parse(m[1]); if (o.agentId && o.question) addCall(String(o.agentId), String(o.question)); } catch {}
+    }
+    if (inlineCalls.length > 0) {
+      // Save tasks directly to agents' Supabase histories as user messages.
+      // The frontend auto-resumes chats that end with a user message, so the agents will respond naturally.
+      await Promise.all(inlineCalls.map(async ({ agentId: tId, question }) => {
+        const existing = await loadHistory(tId);
+        await saveHistory(tId, [...existing, { role: "user", text: question }]);
+        githubActions.push(`👥 ${tId}: ${question.slice(0, 100)}`);
+      }));
+      // Strip all consult_agent call syntax from displayed text
+      text = text
+        .replace(/consult_agent\s*\([^)]*\)\s*/g, "")
+        .replace(/(?:function=consult_agent|<function=consult_agent)[^\n]*(?:\n|$)/g, "")
+        .replace(/<\/function>\s*/g, "")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
     }
 
     const botMsg: ChatMsg = { role: "model", text, ...(githubActions.length ? { githubActions } : {}) };
