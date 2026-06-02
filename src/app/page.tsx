@@ -740,6 +740,9 @@ export default function Home(){
     return()=>window.removeEventListener('resize',check);
   },[]);
 
+  // Track which (agentId, msgIndex) pairs have already been auto-dispatched
+  const dispatchedRef = useRef<Set<string>>(new Set());
+
   useEffect(()=>{
     async function fetchHistories(){
       try{
@@ -754,13 +757,13 @@ export default function Home(){
               const localLen=(prev[id]||[]).length;
               if(!sendingRef.current.has(id) && msgs.length >= localLen){
                 merged[id]=msgs;
-                // If the chat now ends with a user message that wasn't there before,
-                // and no one is sending for this agent — auto-dispatch it
-                const last=msgs[msgs.length-1];
-                const prevLast=(prev[id]||[])[localLen-1];
-                if(last?.role==="user" && prevLast?.role!=="user" && !sendingRef.current.has(id)){
-                  toAutoDispatch.push({id, msg:last.text, hist:msgs.slice(0,-1)});
-                }
+              }
+              // Auto-dispatch any user message at the end that hasn't been dispatched yet
+              const last=msgs[msgs.length-1];
+              const key=`${id}:${msgs.length-1}`;
+              if(last?.role==="user" && !sendingRef.current.has(id) && !dispatchedRef.current.has(key)){
+                dispatchedRef.current.add(key);
+                toAutoDispatch.push({id, msg:last.text, hist:msgs.slice(0,-1)});
               }
             }
             return merged;
@@ -773,7 +776,7 @@ export default function Home(){
       }catch{}
     }
     fetchHistories();
-    const iv=setInterval(fetchHistories,10_000);
+    const iv=setInterval(fetchHistories,3_000);
     return()=>clearInterval(iv);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
