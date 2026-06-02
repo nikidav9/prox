@@ -55,10 +55,20 @@ const MODEL_POOL: ModelEntry[] = [
 ];
 
 const cooldowns = new Map<string, number>();
+let roundRobinIdx = 0; // rotate starting model to spread load evenly
 
 function availableModels(): ModelEntry[] {
   const now = Date.now();
   return MODEL_POOL.filter(m => (cooldowns.get(m.id) ?? 0) <= now);
+}
+
+// Return models in rotated order so load spreads across all providers
+function rotatedModels(): ModelEntry[] {
+  const avail = availableModels();
+  if (avail.length === 0) return [];
+  const start = roundRobinIdx % avail.length;
+  roundRobinIdx = (roundRobinIdx + 1) % Math.max(MODEL_POOL.length, 1);
+  return [...avail.slice(start), ...avail.slice(0, start)];
 }
 
 function markCooled(id: string, msg: string) {
@@ -299,30 +309,33 @@ export async function POST(req: NextRequest) {
       } finally { clearTimeout(tid); }
     }
 
-    // Race OpenRouter + Cerebras together — all available, fastest wins
-    const racePool = availableModels().filter(e => e.provider === "openrouter" || e.provider === "cerebras");
-    const raceResult = racePool.length > 0 ? await Promise.any(racePool.map(entry => {
-      if (entry.provider === "openrouter" && process.env.OPENROUTER_API_KEY) {
-        return callOpenAICompat(
-          "https://openrouter.ai/api/v1/chat/completions",
-          `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          entry, chatMessages, chatTools, 18_000,
-          { "HTTP-Referer": "https://prox-two-zeta.vercel.app", "X-Title": "Dev Office" }
-        );
-      }
-      if (entry.provider === "cerebras" && cerebrasKey) {
-        return callOpenAICompat(
-          "https://api.cerebras.ai/v1/chat/completions",
-          `Bearer ${cerebrasKey}`,
-          entry, chatMessages, chatTools, 12_000
-        );
-      }
-      return Promise.reject("no key");
-    })).catch(() => null) : null;
+    // Sequential failover: one model at a time, instant skip on quota/error
+    // rotatedModels() distributes load evenly — each request starts from different model
+    const fastPool = rotatedModels().filter(e => e.provider === "openrouter" || e.provider === "cerebras");
+    let raceResult: Awaited<ReturnType<typeof callOpenAICompat>> | null = null;
+    for (const entry of fastPool) {
+      try {
+        if (entry.provider === "openrouter" && process.env.OPENROUTER_API_KEY) {
+          raceResult = await callOpenAICompat(
+            "https://openrouter.ai/api/v1/chat/completions",
+            `Bearer ${process.env.OPENROUTER_API_KEY}`,
+            entry, chatMessages, chatTools, 18_000,
+            { "HTTP-Referer": "https://prox-two-zeta.vercel.app", "X-Title": "Dev Office" }
+          );
+        } else if (entry.provider === "cerebras" && cerebrasKey) {
+          raceResult = await callOpenAICompat(
+            "https://api.cerebras.ai/v1/chat/completions",
+            `Bearer ${cerebrasKey}`,
+            entry, chatMessages, chatTools, 12_000
+          );
+        } else { continue; }
+        break;
+      } catch (e) { markCooled(entry.id, String(e)); continue; }
+    }
 
     const orMessages = chatMessages;
     const orTools = chatTools;
-    if (racePool.length > 0) {
+    if (fastPool.length > 0) {
 
       if (raceResult) {
         const { msg, entry } = raceResult;
@@ -362,7 +375,7 @@ export async function POST(req: NextRequest) {
         text = curMsg.content || "";
         usedProvider = entry.id;
       } else {
-        racePool.forEach(e => markCooled(e.id, "race failed"));
+        fastPool.forEach(e => markCooled(e.id, "all failed"));
       }
     }
 
