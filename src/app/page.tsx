@@ -306,7 +306,6 @@ interface MobileLayoutProps {
   onSend: (agentId: string, msg: string, history: ChatMsg[]) => Promise<void>;
   setChatHistories: React.Dispatch<React.SetStateAction<Record<string,ChatMsg[]>>>;
   githubToken: string;
-  setGithubToken: (t: string) => void;
 }
 
 function CodeBlock({ code, lang }: { code: string; lang?: string }) {
@@ -344,7 +343,7 @@ function MessageText({ text }: { text: string }) {
   );
 }
 
-function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setChatHistories, githubToken, setGithubToken }: MobileLayoutProps) {
+function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setChatHistories, githubToken }: MobileLayoutProps) {
   const [tab, setTab] = useState<"agents"|"team">("agents");
   const [selectedId, setSelectedId] = useState<string|null>(null);
   const [inputText, setInputText] = useState("");
@@ -353,7 +352,6 @@ function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setC
   const [teamLoading, setTeamLoading] = useState(false);
   const [teamDiscussion, setTeamDiscussion] = useState<{agentId:string;agentName:string;role:string;text:string}[]>([]);
   const [showSettings, setShowSettings] = useState(false);
-  const [tokenDraft, setTokenDraft] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
   const teamEndRef = useRef<HTMLDivElement>(null);
 
@@ -390,6 +388,7 @@ function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setC
 
   function clearHistory(agentId: string) {
     setChatHistories(p => { const n = { ...p }; delete n[agentId]; return n; });
+    fetch("/api/history", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agentId }) }).catch(() => {});
   }
 
   if (selAgent) {
@@ -410,12 +409,6 @@ function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setC
             <div style={{fontWeight:"bold",fontSize:14,color:selAgent.shirtColor}}>{selAgent.name}</div>
             <div style={{fontSize:10,color:"#7a6090"}}>{selAgent.role}{isBusy?" · думает…":""}</div>
           </div>
-          {!githubToken && (
-            <button onClick={() => { setShowSettings(true); setSelectedId(null); }}
-              style={{background:"#1a1000",border:"1px solid #fbbf2444",borderRadius:6,padding:"4px 8px",color:"#fbbf24",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>
-              + GitHub
-            </button>
-          )}
           {chatHist.length > 0 && (
             <button onClick={() => clearHistory(selAgent.id)}
               style={{background:"#2a1020",border:"1px solid #5a2040",borderRadius:6,padding:"4px 8px",color:"#f87171",fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>
@@ -430,9 +423,6 @@ function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setC
               <div style={{fontSize:28,marginBottom:8}}>{selAgent.name.charAt(0)}</div>
               <div style={{color:"#5a4a7a"}}>Напиши задание для <span style={{color:selAgent.shirtColor}}>{selAgent.name}</span></div>
               <div style={{color:"#3a2a5a",marginTop:8,fontSize:10}}>Можно вставить код, ссылки, задачи</div>
-              {!githubToken && <div style={{marginTop:12,padding:"8px 12px",background:"#1a1000",border:"1px solid #fbbf2422",borderRadius:8,fontSize:10,color:"#fbbf24"}}>
-                💡 Подключи GitHub чтобы агент мог создавать репозитории и файлы
-              </div>}
             </div>
           )}
           {chatHist.map((m, i) => (
@@ -505,42 +495,41 @@ function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setC
           onClick={e => { if(e.target===e.currentTarget) setShowSettings(false); }}>
           <div style={{background:"#13102a",borderRadius:"20px 20px 0 0",padding:"20px 20px 40px",border:"1px solid #2a1a4a"}}>
             <div style={{width:40,height:4,background:"#3a2a5a",borderRadius:2,margin:"0 auto 20px"}}/>
-            <div style={{fontSize:16,fontWeight:"bold",color:"#a78bfa",marginBottom:16}}>⚙️ Настройки</div>
+            <div style={{fontSize:16,fontWeight:"bold",color:"#a78bfa",marginBottom:20}}>⚙️ Настройки</div>
 
-            {/* GitHub token */}
-            <div style={{marginBottom:20}}>
-              <div style={{fontSize:12,color:"#7a6090",marginBottom:6}}>GitHub токен</div>
-              <div style={{fontSize:10,color:"#5a4a7a",marginBottom:8,lineHeight:1.5}}>
-                Позволяет агентам создавать репозитории, файлы, ветки и задачи прямо в чате
+            {/* GitHub status — server-side token, read-only */}
+            <div style={{padding:"14px",background:"#0a1a0a",border:"1px solid #1a4a1a",borderRadius:12,marginBottom:16}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                <div style={{width:10,height:10,borderRadius:"50%",background:"#22c55e",boxShadow:"0 0 8px #22c55e",flexShrink:0}}/>
+                <span style={{fontSize:14,fontWeight:"bold",color:"#22c55e"}}>GitHub подключён</span>
               </div>
-              <input value={tokenDraft} onChange={e => setTokenDraft(e.target.value)}
-                placeholder="ghp_xxxxxxxxxxxxxxxxxx"
-                type="password"
-                style={{width:"100%",background:"#1a1035",border:"1px solid #3a2a6a",borderRadius:10,padding:"10px 14px",
-                  color:"#d4c8f0",fontSize:13,outline:"none",fontFamily:"'Courier New',monospace",boxSizing:"border-box"}}/>
-              {githubToken && <div style={{fontSize:10,color:"#22c55e",marginTop:4}}>● Токен подключён</div>}
-            </div>
-
-            <div style={{display:"flex",gap:8}}>
-              <button onClick={() => { setGithubToken(tokenDraft.trim()); setShowSettings(false); }}
-                style={{flex:1,background:"#7c3aed",border:"none",borderRadius:10,padding:"12px",color:"#fff",fontWeight:"bold",fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>
-                Сохранить
-              </button>
-              {githubToken && <button onClick={() => { setGithubToken(""); setTokenDraft(""); }}
-                style={{background:"#2a1020",border:"1px solid #5a2040",borderRadius:10,padding:"12px 16px",color:"#f87171",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>
-                Удалить
-              </button>}
-            </div>
-
-            <div style={{marginTop:20,padding:"12px",background:"#0d0d1a",borderRadius:10,border:"1px solid #2a1a4a"}}>
-              <div style={{fontSize:10,color:"#5a4a7a",lineHeight:1.7}}>
-                <div style={{color:"#7a6090",marginBottom:4,fontWeight:"bold"}}>Что умеют агенты с GitHub:</div>
-                <div>✦ Создавать репозитории и ветки</div>
-                <div>✦ Писать и обновлять файлы с кодом</div>
-                <div>✦ Создавать задачи (issues)</div>
-                <div>✦ Смотреть существующий код</div>
+              <div style={{fontSize:11,color:"#4a7a4a",lineHeight:1.7}}>
+                <div>✦ Создание репозиториев и веток</div>
+                <div>✦ Запись и обновление файлов</div>
+                <div>✦ Создание задач (issues)</div>
+                <div>✦ Просмотр кода</div>
               </div>
             </div>
+
+            {/* AI models status */}
+            <div style={{padding:"14px",background:"#0d0d1a",border:"1px solid #2a1a4a",borderRadius:12,marginBottom:20}}>
+              <div style={{fontSize:11,color:"#7a6090",marginBottom:8,fontWeight:"bold"}}>ИИ модели</div>
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span style={{fontSize:12,color:"#a78bfa"}}>Gemini 2.0 Flash</span>
+                  <span style={{fontSize:10,color:"#5a4a7a",background:"#1a1035",borderRadius:4,padding:"2px 6px"}}>основной</span>
+                </div>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span style={{fontSize:12,color:"#60a5fa"}}>Groq llama-3.3-70b</span>
+                  <span style={{fontSize:10,color:"#5a4a7a",background:"#1a1035",borderRadius:4,padding:"2px 6px"}}>резерв</span>
+                </div>
+              </div>
+            </div>
+
+            <button onClick={() => setShowSettings(false)}
+              style={{width:"100%",background:"#7c3aed",border:"none",borderRadius:10,padding:"12px",color:"#fff",fontWeight:"bold",fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>
+              Закрыть
+            </button>
           </div>
         </div>
       )}
@@ -556,7 +545,7 @@ function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setC
             ))}
           </div>
           {githubToken && <span style={{fontSize:9,color:"#22c55e"}}>● GitHub</span>}
-          <button onClick={() => { setShowSettings(true); setTokenDraft(githubToken); }}
+          <button onClick={() => setShowSettings(true)}
             style={{background:"none",border:"1px solid #3a2a5a",borderRadius:8,padding:"5px 10px",color:"#7a6090",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>
             ⚙️
           </button>
@@ -590,7 +579,7 @@ function MobileLayout({ agents, chatHistories, sending, sendingIds, onSend, setC
                       {agent.name.charAt(0)}
                     </div>
                     {isBusy && <div style={{position:"absolute",bottom:1,right:1,width:12,height:12,borderRadius:"50%",
-                      background:"#22c55e",border:"2px solid #0d0d1a",boxShadow:"0 0 6px #22c55e"}}/>}
+                      background:"#22c55e",border:"2px solid #0d0d1a",boxShadow:"0 0 6px #22c55e"}}/> }
                   </div>
                   {/* Name + last message */}
                   <div style={{flex:1,minWidth:0}}>
@@ -763,10 +752,11 @@ export default function Home(){
         const data=await res.json();
         if(data&&typeof data==='object'){
           setChatHistories(prev=>{
-            // Merge: server wins for any agent not currently busy
             const merged={...prev};
             for(const [id,msgs] of Object.entries(data) as [string,ChatMsg[]][]){
-              if(!sendingRef.current.has(id)) merged[id]=msgs;
+              // Skip if agent is busy OR local has more messages (error/pending not yet saved)
+              const localLen=(prev[id]||[]).length;
+              if(!sendingRef.current.has(id) && msgs.length >= localLen) merged[id]=msgs;
             }
             return merged;
           });
@@ -780,39 +770,8 @@ export default function Home(){
 
   useEffect(() => {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').then(() => {
-        navigator.serviceWorker.addEventListener('message', (event) => {
-          if (event.data?.type === 'TASK_DONE') {
-            const { agentId, result } = event.data;
-            const reply = (result.text as string) || '...';
-            const acts: string[] | undefined = result.githubActions;
-            setChatHistories(p => ({
-              ...p,
-              [agentId]: [...(p[agentId] || []), { role: 'model' as const, text: reply, ...(acts ? { githubActions: acts } : {}) }],
-            }));
-          }
-        });
-      }).catch(() => {});
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
     }
-  }, []);
-
-  useEffect(() => {
-    idbGetAll().then(tasks => {
-      for (const task of tasks) {
-        if (task.status === 'done' && task.result) {
-          const result = task.result as { text?: string; githubActions?: string[] };
-          const reply = result.text || '...';
-          const acts = result.githubActions;
-          setChatHistories(p => {
-            const existing = p[task.agentId as string] || [];
-            const last = existing[existing.length - 1];
-            if (last?.role === 'model' && last.text === reply) return p;
-            return { ...p, [task.agentId as string]: [...existing, { role: 'model' as const, text: reply, ...(acts ? { githubActions: acts } : {}) }] };
-          });
-          idbDelete(task.id as string);
-        }
-      }
-    }).catch(() => {});
   }, []);
 
   useEffect(()=>{ try{localStorage.setItem("dev_office_history",JSON.stringify(chatHistories));}catch{} },[chatHistories]);
@@ -890,20 +849,7 @@ export default function Home(){
     setSendingIds(s=>{const n=new Set(s);n.add(agentId);return n;});
     const ag=agentsRef.current.find(a=>a.def.id===agentId);
     if(ag){ag.state="type";ag.dir=SEATS[ag.seatI].dir;ag.busy=true;ag.bubble=null;}
-    const taskId=`${agentId}-${Date.now()}`;
     const apiHistory=history.filter(m=>m.role==="user"||m.role==="model").map(m=>({role:m.role as "user"|"model",text:m.text}));
-    await idbPut({id:taskId,agentId,message:msg,history:apiHistory,githubToken,status:'pending',createdAt:Date.now()});
-    if('serviceWorker' in navigator){
-      navigator.serviceWorker.ready.then(reg=>{
-        if('sync' in reg){
-          (reg as ServiceWorkerRegistration&{sync:{register:(tag:string)=>Promise<void>}}).sync.register('process-tasks').catch(()=>{
-            navigator.serviceWorker.controller?.postMessage({type:'PROCESS_NOW'});
-          });
-        }else{navigator.serviceWorker.controller?.postMessage({type:'PROCESS_NOW'});}
-      });
-    }
-    const consultDone=false;
-    void consultDone;
     const autoRetry=async(waitSecs:number)=>{
       let secs=waitSecs;
       setChatHistories(p=>({...p,[agentId]:[...(p[agentId]||[]),{role:"system",text:`⏳ Лимит запросов. Авто-повтор через ${secs} сек…`}]}));
@@ -931,7 +877,6 @@ export default function Home(){
       const res=await fetch("/api/agent",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({message:msg,agentId,history:apiHistory,githubToken})});
       const data=await res.json();
-      await idbDelete(taskId);
       if(res.status===429&&data.retryAfter){
         await autoRetry(Math.min(data.retryAfter,120));
         return;
@@ -996,6 +941,7 @@ export default function Home(){
 
   function clearHistory(agentId:string){
     setChatHistories(p=>{const n={...p};delete n[agentId];return n;});
+    fetch("/api/history",{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({agentId})}).catch(()=>{});
   }
 
   async function startTeamDiscussion(){
@@ -1015,7 +961,7 @@ export default function Home(){
   const totalMsgs=Object.values(chatHistories).reduce((s,h)=>s+h.length,0);
 
   if(isMobile){
-    return <MobileLayout agents={AGENTS} chatHistories={chatHistories} sending={sending} sendingIds={sendingIds} onSend={dispatchTask} setChatHistories={setChatHistories} githubToken={githubToken} setGithubToken={setGithubToken}/>;
+    return <MobileLayout agents={AGENTS} chatHistories={chatHistories} sending={sending} sendingIds={sendingIds} onSend={dispatchTask} setChatHistories={setChatHistories} githubToken={githubToken}/>;
   }
 
   return(
@@ -1033,25 +979,12 @@ export default function Home(){
         </div>
         {totalMsgs>0&&<span style={{fontSize:9,color:"#5a8a3a",marginLeft:4}}>💾 {totalMsgs} сообщ.</span>}
         <div style={{marginLeft:"auto",display:"flex",gap:8,alignItems:"center"}}>
-          <span style={{fontSize:9,color:hasGithub?"#5a9a5a":"#7a6830"}}>{hasGithub?"GitHub подключён":"GitHub не настроен"}</span>
+          <span style={{fontSize:9,color:"#22c55e"}}>● GitHub</span>
           <button onClick={()=>setShowTeamChat(!showTeamChat)}
             style={{background:showTeamChat?"#2a1a3a":"#1a0a2a",border:"1px solid #5a3a8a",borderRadius:4,padding:"2px 8px",color:"#c084fc",fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>Команда</button>
-          <button onClick={()=>{setShowSettings(!showSettings);setTokenInput(githubToken);}}
-            style={{background:showSettings?"#3a3010":"#2a2008",border:"1px solid #3a3010",borderRadius:4,padding:"2px 8px",color:"#D4A843",fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>Настройки</button>
         </div>
       </div>
 
-      {showSettings&&(
-        <div style={{background:"#1a1505",borderBottom:"2px solid #3a3010",padding:"10px 14px",display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
-          <span style={{fontSize:11,color:"#D4A843",minWidth:100}}>GitHub Token:</span>
-          <input value={tokenInput} onChange={e=>setTokenInput(e.target.value)} placeholder="ghp_xxxxxxxxxxxx" type="password"
-            style={{flex:1,minWidth:240,background:"#221a0a",border:"1px solid #5a4a10",borderRadius:4,padding:"4px 8px",color:"#d4c090",fontSize:11,outline:"none",fontFamily:"inherit"}}/>
-          <button onClick={()=>{setGithubToken(tokenInput);setShowSettings(false);}}
-            style={{background:"#3a7a3a",border:"none",borderRadius:4,padding:"4px 12px",color:"#fff",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Сохранить</button>
-          {githubToken&&<button onClick={()=>{setGithubToken("");setTokenInput("");setShowSettings(false);}}
-            style={{background:"#7a2a2a",border:"none",borderRadius:4,padding:"4px 10px",color:"#fff",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Отключить</button>}
-        </div>
-      )}
 
       <div style={{display:"flex",flex:1,overflow:"hidden"}}>
         <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",padding:4}}>
