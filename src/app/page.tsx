@@ -795,6 +795,13 @@ export default function Home(){
         if(!res.ok)return;
         const data=await res.json();
         if(data&&typeof data==='object'){
+          // If ALL agents are empty in Supabase — clear localStorage completely (manual reset)
+          const totalInDb=Object.values(data as Record<string,ChatMsg[]>).reduce((s,m)=>s+(m?.length||0),0);
+          if(totalInDb===0){
+            try{localStorage.removeItem("dev_office_history");}catch{}
+            setChatHistories({});
+            return;
+          }
           const toAutoDispatch: {id:string; msg:string; hist:ChatMsg[]}[]=[];
           setChatHistories(prev=>{
             const merged={...prev};
