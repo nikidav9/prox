@@ -93,6 +93,17 @@ async function compressHistory(messages: ChatMsg[]): Promise<ChatMsg[]> {
   return messages;
 }
 
+// Strip internal reasoning blocks that thinking models expose
+function stripThinking(text: string): string {
+  // Remove <think>...</think> blocks (DeepSeek-R1, Qwen3, etc.)
+  text = text.replace(/<think>[\s\S]*?<\/think>/gi, "");
+  // Remove <thinking>...</thinking>
+  text = text.replace(/<thinking>[\s\S]*?<\/thinking>/gi, "");
+  // Remove [思考过程] Chinese thinking markers
+  text = text.replace(/\[思考过程\][\s\S]*?\[\/思考过程\]/g, "");
+  return text.trim();
+}
+
 async function githubFetch(token: string, path: string, method = "GET", body?: object) {
   const res = await fetch(`https://api.github.com${path}`, {
     method,
@@ -586,7 +597,7 @@ export async function POST(req: NextRequest) {
             curMsg = r2.msg;
           } catch { break; }
         }
-        text = curMsg.content || "";
+        text = stripThinking(curMsg.content || "");
         usedProvider = entry.id;
       } else {
         fastPool.forEach(e => markCooled(e.id, "all failed"));
@@ -635,7 +646,7 @@ export async function POST(req: NextRequest) {
               modelTimeout
             );
           }
-          text = result.response.text();
+          text = stripThinking(result.response.text());
           usedProvider = entry.id;
           break;
 
@@ -656,7 +667,7 @@ export async function POST(req: NextRequest) {
             const msg = choice.message;
             groqMessages.push(msg as Groq.Chat.ChatCompletionMessageParam);
             if (!msg.tool_calls || msg.tool_calls.length === 0) {
-              text = msg.content || "Нет ответа";
+              text = stripThinking(msg.content || "Нет ответа");
               break;
             }
             for (const tc of msg.tool_calls) {
