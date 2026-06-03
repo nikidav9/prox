@@ -473,7 +473,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const { message, agentId, history, githubToken: clientToken, _depth = 0 } = await req.json();
+    const { message, agentId, history, githubToken: clientToken, _depth = 0, _groupChatId, _threadId } = await req.json();
     if (!message || !agentId) return NextResponse.json({ error: "message and agentId required" }, { status: 400 });
     const agent = AGENTS.find((a) => a.id === agentId);
     if (!agent) return NextResponse.json({ error: "Unknown agent" }, { status: 400 });
@@ -792,19 +792,24 @@ export async function POST(req: NextRequest) {
     await saveHistory(agentId, [...historyWithUser, botMsg]);
     await releaseDispatchLock(agentId);
 
-    // Send Lena's responses to Telegram
-    if (agentId === "pm") {
+    // Send agent responses to Telegram
+    // Case 1: message came from a group topic → reply in same topic
+    if (_groupChatId && _threadId) {
+      if (text && text !== "Готово.") {
+        await sendTelegram(String(_groupChatId), `${text}`, Number(_threadId));
+      }
+    } else if (agentId === "pm") {
+      // Case 2: DM flow — only Lena sends to owner's DM
       const chatId = await getTelegramChatId();
       if (chatId) {
         const delegations = githubActions.filter(a => a.startsWith("👥"));
         if (text && text !== "Готово.") {
           await sendTelegram(chatId, `💬 Лена:\n${text}`);
         } else if (delegations.length > 0) {
-          // She delegated but wrote no text — summarize who got tasks
           const summary = delegations.map(d => d.replace("👥 ", "")).map(d => {
             const [id, task] = d.split(": ");
-            const agent = AGENTS.find(a => a.id === id);
-            return `• ${agent?.name ?? id}: ${task?.slice(0, 60) ?? "задача"}`;
+            const agentObj = AGENTS.find(a => a.id === id);
+            return `• ${agentObj?.name ?? id}: ${task?.slice(0, 60) ?? "задача"}`;
           }).join("\n");
           await sendTelegram(chatId, `✅ Лена раздала задачи:\n${summary}`);
         }
