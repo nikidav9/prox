@@ -2,7 +2,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const AGENT_URL = process.env.AGENT_URL || "https://prox-two-zeta.vercel.app";
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
-const INTERVAL_MS = 30_000;
+const INTERVAL_MS = 10_000;
 const LOCK_TTL = 90_000; // 90s — agent API max timeout is 60s
 
 // In-memory set for this worker instance
