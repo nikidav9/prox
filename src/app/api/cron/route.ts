@@ -3,7 +3,7 @@ import { loadAllHistories } from "@/lib/supabase";
 
 const BASE_URL = process.env.VERCEL_URL
   ? `https://${process.env.VERCEL_URL}`
-  : "https://prox-two-zeta.vercel.app";
+  : "https://prox-agents.vercel.app";
 
 // Called by Vercel Cron every minute
 export async function GET(req: NextRequest) {
