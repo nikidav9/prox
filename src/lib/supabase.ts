@@ -53,9 +53,6 @@ export async function acquireDispatchLock(agentId: string): Promise<boolean> {
   if (!sb) return true; // no supabase = allow (dev mode)
   const lockId = `_lock_${agentId}`;
   try {
-    const { data } = await sb.from("chat_histories").select("messages").eq("agent_id", lockId).single();
-    const existing = (data?.messages as {ts?: number}[] | null)?.[0];
-    if (existing?.ts && existing.ts > Date.now()) return false; // locked
     await sb.from("chat_histories").upsert(
       { agent_id: lockId, messages: [{ role: "system", text: "lock", ts: Date.now() + LOCK_TTL }], updated_at: new Date().toISOString() },
       { onConflict: "agent_id" }
