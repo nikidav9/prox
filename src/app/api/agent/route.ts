@@ -507,10 +507,19 @@ export async function POST(req: NextRequest) {
     const stored: ChatMsg[] = await loadHistory(agentId);
     const fullHistory: ChatMsg[] = stored.length > 0 ? stored : (history || []);
     const compressedHistory = await compressHistory(fullHistory);
+    // Acquire lock BEFORE saving userMsg — prevents Railway worker from
+    // seeing a "user" last-message and re-dispatching while we're running
+    const lockAcquired = await acquireDispatchLock(agentId);
+    if (!lockAcquired) {
+      return NextResponse.json({ error: "Агент занят, попробуйте через несколько секунд" }, { status: 409 });
+    }
+
+    // Dedup: don't append if last stored message is identical user message
+    const lastStored = compressedHistory[compressedHistory.length - 1];
+    const isDup = lastStored?.role === "user" && lastStored?.text === message;
     const userMsg: ChatMsg = { role: "user", text: message, ts: Date.now() };
-    await saveHistory(agentId, [...compressedHistory, userMsg]);
-    // Hold distributed lock so Railway worker doesn't double-dispatch this agent
-    await acquireDispatchLock(agentId);
+    const historyWithUser = isDup ? compressedHistory : [...compressedHistory, userMsg];
+    await saveHistory(agentId, historyWithUser);
 
     // Append Russian language reminder to every user message sent to the model
     const messageForModel = message + "\n\n[ВАЖНО: отвечай ТОЛЬКО на русском языке]";
@@ -780,7 +789,7 @@ export async function POST(req: NextRequest) {
     if (!text) text = "Готово.";
 
     const botMsg: ChatMsg = { role: "model", text, ts: Date.now(), ...(githubActions.length ? { githubActions } : {}) };
-    await saveHistory(agentId, [...compressedHistory, userMsg, botMsg]);
+    await saveHistory(agentId, [...historyWithUser, botMsg]);
     await releaseDispatchLock(agentId);
 
     // Send Lena's responses to Telegram
