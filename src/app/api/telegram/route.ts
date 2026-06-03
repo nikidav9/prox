@@ -9,18 +9,34 @@ const BASE_URL = process.env.VERCEL_URL
 // Deduplicate Telegram webhook retries by update_id (in-memory, per instance)
 const recentUpdates = new Set<number>();
 
+// Cache group config in-memory (refreshed every 5 min)
+let groupConfigCache: { groupId: string; topicMap: Record<string, number> } | null = null;
+let groupConfigLoadedAt = 0;
+
+async function getGroupConfig() {
+  if (groupConfigCache && Date.now() - groupConfigLoadedAt < 5 * 60_000) return groupConfigCache;
+  const config = await loadHistory("_tg_group_config");
+  if (config[0]?.text) {
+    try {
+      groupConfigCache = JSON.parse(config[0].text);
+      groupConfigLoadedAt = Date.now();
+    } catch {}
+  }
+  return groupConfigCache;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const msg = body?.message;
     if (!msg) return NextResponse.json({ ok: true });
 
-    // Skip duplicate webhook retries
+    // Deduplicate webhook retries
     const updateId: number = body?.update_id;
     if (updateId) {
       if (recentUpdates.has(updateId)) return NextResponse.json({ ok: true });
       recentUpdates.add(updateId);
-      if (recentUpdates.size > 60) {
+      if (recentUpdates.size > 100) {
         const first = recentUpdates.values().next().value as number;
         recentUpdates.delete(first);
       }
@@ -28,31 +44,61 @@ export async function POST(req: NextRequest) {
 
     const chatId = String(msg.chat?.id || "");
     const text: string = msg.text || "";
+    const threadId: number | undefined = msg.message_thread_id;
+    const chatType: string = msg.chat?.type || "private";
+
     if (!chatId || !text) return NextResponse.json({ ok: true });
 
-    await saveHistory("_tg_config", [{ role: "system", text: chatId }]);
+    // ── GROUP MESSAGE with topic thread ──────────────────────────────────
+    if ((chatType === "supergroup" || chatType === "group") && threadId) {
+      const config = await getGroupConfig();
+      if (!config) return NextResponse.json({ ok: true });
 
-    if (text === "/start") {
-      await sendTelegram(chatId, "Привет, Создатель 👋\nЛена будет писать сюда когда нужно твоё решение. Просто отвечай — она получит ответ и продолжит работу.");
+      // Find which agent owns this topic
+      const agentId = Object.entries(config.topicMap).find(([, tid]) => tid === threadId)?.[0];
+      if (!agentId) return NextResponse.json({ ok: true }); // unknown topic, ignore
+
+      // Skip bot commands
+      if (text.startsWith("/")) return NextResponse.json({ ok: true });
+
+      // Typing indicator
+      fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendChatAction`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, action: "typing", message_thread_id: threadId }),
+      }).catch(() => {});
+
+      // Call agent
+      await fetch(`${BASE_URL}/api/agent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text, agentId, history: [], _groupChatId: chatId, _threadId: threadId }),
+      }).catch(() => null);
+
       return NextResponse.json({ ok: true });
     }
 
-    // Typing indicator (fire-and-forget is fine here — it's just UI)
-    fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendChatAction`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, action: "typing" }),
-    }).catch(() => {});
+    // ── PRIVATE DM — only for the owner (existing flow for Lena/pm) ──────
+    if (chatType === "private") {
+      await saveHistory("_tg_config", [{ role: "system", text: chatId }]);
 
-    // Call agent synchronously — Vercel serverless kills async background tasks.
-    // Telegram may retry after 5s but recentUpdates deduplication handles that.
-    // Railway worker double-dispatch is prevented by acquireDispatchLock in agent/route.ts.
-    await fetch(`${BASE_URL}/api/agent`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text, agentId: "pm", history: [] }),
-    }).catch(() => null);
-    // agent/route.ts sends the Telegram reply internally — no duplicate send here
+      if (text === "/start") {
+        await sendTelegram(chatId, "Привет, Создатель 👋\nЛена будет писать сюда когда нужно твоё решение. Просто отвечай — она получит ответ и продолжит работу.");
+        return NextResponse.json({ ok: true });
+      }
+
+      fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendChatAction`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, action: "typing" }),
+      }).catch(() => {});
+
+      await fetch(`${BASE_URL}/api/agent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text, agentId: "pm", history: [] }),
+      }).catch(() => null);
+    }
 
   } catch (e) {
     console.error("[telegram webhook]", e);
@@ -60,18 +106,25 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ ok: true });
 }
 
-export async function sendTelegram(chatId: string, text: string) {
+export async function sendTelegram(chatId: string, text: string, threadId?: number) {
   if (!BOT_TOKEN || !chatId) return;
-  // Strip HTML tags, send as plain text to avoid parse failures
   const plain = text.replace(/<[^>]+>/g, "").trim();
   await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text: plain }),
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: plain,
+      ...(threadId ? { message_thread_id: threadId } : {}),
+    }),
   }).catch((e) => console.error("[telegram] send error:", e));
 }
 
 export async function getTelegramChatId(): Promise<string> {
   const config = await loadHistory("_tg_config");
   return config[0]?.text || "";
+}
+
+export async function getGroupInfo(): Promise<{ groupId: string; topicMap: Record<string, number> } | null> {
+  return getGroupConfig();
 }
