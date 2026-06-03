@@ -15,32 +15,8 @@ type Provider = "gemini" | "groq" | "openrouter" | "cerebras";
 interface ModelEntry { id: string; provider: Provider; model: string }
 
 const MODEL_POOL: ModelEntry[] = [
-  // ── OpenRouter (verified live 2026-06-03) ───────────────────────────
-  { id: "or-qwen3-coder",          provider: "openrouter", model: "qwen/qwen3-coder:free" },
-  { id: "or-kimi-k2-6",            provider: "openrouter", model: "moonshotai/kimi-k2.6:free" },
-  { id: "or-qwen3-next-80b",       provider: "openrouter", model: "qwen/qwen3-next-80b-a3b-instruct:free" },
-  { id: "or-nemotron-super-120b",  provider: "openrouter", model: "nvidia/nemotron-3-super-120b-a12b:free" },
-  { id: "or-gemma4-31b",           provider: "openrouter", model: "google/gemma-4-31b-it:free" },
-  { id: "or-gemma4-26b",           provider: "openrouter", model: "google/gemma-4-26b-a4b-it:free" },
-  { id: "or-gpt-oss-120b",         provider: "openrouter", model: "openai/gpt-oss-120b:free" },
-  { id: "or-gpt-oss-20b",          provider: "openrouter", model: "openai/gpt-oss-20b:free" },
-  { id: "or-llama33-70b",          provider: "openrouter", model: "meta-llama/llama-3.3-70b-instruct:free" },
-  { id: "or-hermes-405b",          provider: "openrouter", model: "nousresearch/hermes-3-llama-3.1-405b:free" },
-  { id: "or-glm45-air",            provider: "openrouter", model: "z-ai/glm-4.5-air:free" },
-  { id: "or-nemotron-nano-30b",    provider: "openrouter", model: "nvidia/nemotron-3-nano-30b-a3b:free" },
-  // ── Cerebras (ultra-fast, generous free limits) ──────────────────────
-  { id: "cb-llama4-scout",         provider: "cerebras",   model: "llama-4-scout-17b-16e-instruct" },
-  { id: "cb-llama33-70b",          provider: "cerebras",   model: "llama-3.3-70b" },
-  { id: "cb-llama31-70b",          provider: "cerebras",   model: "llama3.1-70b" },
-  { id: "cb-qwen3-32b",            provider: "cerebras",   model: "qwen-3-32b" },
-  // ── Groq (verified live 2026-06-03) ─────────────────────────────────
-  { id: "groq-llama4-scout",       provider: "groq",   model: "meta-llama/llama-4-scout-17b-16e-instruct" },
-  { id: "groq-llama33-70b",        provider: "groq",   model: "llama-3.3-70b-versatile" },
-  { id: "groq-llama31-8b",         provider: "groq",   model: "llama-3.1-8b-instant" },
-  { id: "groq-qwen3-32b",          provider: "groq",   model: "qwen/qwen3-32b" },
-  // ── Gemini ────────────────────────────────────────────────────────────
-  { id: "gemini-2.0-flash",        provider: "gemini", model: "gemini-2.0-flash" },
-  { id: "gemini-2.5-flash",        provider: "gemini", model: "gemini-2.5-flash" },
+  { id: "gemini-2.0-flash", provider: "gemini", model: "gemini-2.0-flash" },
+  { id: "gemini-2.5-flash", provider: "gemini", model: "gemini-2.5-flash" },
 ];
 
 const cooldowns = new Map<string, number>();
