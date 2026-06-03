@@ -31,7 +31,6 @@ const MODEL_POOL: ModelEntry[] = [
   { id: "or-deepseek-r1-llama",    provider: "openrouter", model: "deepseek/deepseek-r1-distill-llama-70b:free" },
   { id: "or-chimera",              provider: "openrouter", model: "tngtech/deepseek-r1t-chimera:free" },
   { id: "or-glm4-32b",             provider: "openrouter", model: "thudm/glm-4-32b:free" },
-  { id: "or-qwen3-14b",            provider: "openrouter", model: "qwen/qwen3-14b:free" },
   // ── Cerebras (ultra-fast, generous free limits) ──────────────────────
   { id: "cb-llama4-scout",         provider: "cerebras",   model: "llama-4-scout-17b-16e-instruct" },
   { id: "cb-llama33-70b",          provider: "cerebras",   model: "llama-3.3-70b" },
