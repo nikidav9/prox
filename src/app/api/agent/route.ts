@@ -563,9 +563,6 @@ export async function POST(req: NextRequest) {
             entry, chatMessages, chatTools, 12_000
           );
         } else { continue; }
-        // Quick check: if model responded in English, skip it immediately
-        const previewText = stripThinking(raceResult?.msg?.content || "");
-        if (isEnglishResponse(previewText)) { markCooled(entry.id, "english response"); raceResult = null; continue; }
         break;
       } catch (e) { markCooled(entry.id, String(e)); continue; }
     }
@@ -610,12 +607,8 @@ export async function POST(req: NextRequest) {
           } catch { break; }
         }
         text = stripThinking(curMsg.content || "");
-        if (isEnglishResponse(text)) {
-          markCooled(entry.id, "english response");
-          text = ""; // fall through to Groq/Gemini fallback
-        } else {
-          usedProvider = entry.id;
-        }
+        if (isEnglishResponse(text)) console.log(`[lang] ${entry.id} responded in English`);
+        usedProvider = entry.id;
       } else {
         fastPool.forEach(e => markCooled(e.id, "all failed"));
       }
@@ -664,11 +657,7 @@ export async function POST(req: NextRequest) {
             );
           }
           text = stripThinking(result.response.text());
-          if (isEnglishResponse(text)) {
-            markCooled(entry.id, "english response");
-            text = "";
-            continue;
-          }
+          if (isEnglishResponse(text)) console.log(`[lang] ${entry.id} responded in English`);
           usedProvider = entry.id;
           break;
 
@@ -706,11 +695,7 @@ export async function POST(req: NextRequest) {
               groqMessages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(toolResult) });
             }
           }
-          if (isEnglishResponse(text)) {
-            markCooled(entry.id, "english response");
-            text = "";
-            continue;
-          }
+          if (isEnglishResponse(text)) console.log(`[lang] ${entry.id} responded in English`);
           usedProvider = entry.id;
           break;
         }
