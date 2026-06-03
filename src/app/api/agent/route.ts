@@ -793,10 +793,14 @@ export async function POST(req: NextRequest) {
     await releaseDispatchLock(agentId);
 
     // Send agent responses to Telegram
+    // Resolve group context: from request params OR from last user message metadata
+    const tgGroupChatId = _groupChatId || historyWithUser.filter(m => m.role === "user").at(-1)?._groupChatId;
+    const tgThreadId = _threadId || historyWithUser.filter(m => m.role === "user").at(-1)?._threadId;
+
     // Case 1: message came from a group topic → reply in same topic
-    if (_groupChatId && _threadId) {
+    if (tgGroupChatId && tgThreadId) {
       if (text && text !== "Готово.") {
-        await sendTelegram(String(_groupChatId), `${text}`, Number(_threadId));
+        await sendTelegram(String(tgGroupChatId), text, Number(tgThreadId));
       }
     } else if (agentId === "pm") {
       // Case 2: DM flow — only Lena sends to owner's DM

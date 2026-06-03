@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { loadHistory, saveHistory } from "@/lib/supabase";
+import { loadHistory, saveHistory, ChatMsg } from "@/lib/supabase";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const BASE_URL = process.env.VERCEL_URL
@@ -54,27 +54,26 @@ export async function POST(req: NextRequest) {
       const config = await getGroupConfig();
       if (!config) return NextResponse.json({ ok: true });
 
-      // Find which agent owns this topic
       const agentId = Object.entries(config.topicMap).find(([, tid]) => tid === threadId)?.[0];
-      if (!agentId) return NextResponse.json({ ok: true }); // unknown topic, ignore
+      if (!agentId || text.startsWith("/")) return NextResponse.json({ ok: true });
 
-      // Skip bot commands
-      if (text.startsWith("/")) return NextResponse.json({ ok: true });
+      // Save message to Supabase with group metadata — Railway worker will pick it up
+      const stored = await loadHistory(agentId);
+      const lastMsg = stored[stored.length - 1];
+      const isDup = lastMsg?.role === "user" && lastMsg?.text === text;
+      if (!isDup) {
+        const userMsg: ChatMsg = { role: "user", text, ts: Date.now(), _groupChatId: chatId, _threadId: threadId };
+        await saveHistory(agentId, [...stored, userMsg]);
+      }
 
-      // Typing indicator
+      // Typing indicator (fire-and-forget)
       fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendChatAction`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ chat_id: chatId, action: "typing", message_thread_id: threadId }),
       }).catch(() => {});
 
-      // Call agent
-      await fetch(`${BASE_URL}/api/agent`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, agentId, history: [], _groupChatId: chatId, _threadId: threadId }),
-      }).catch(() => null);
-
+      // Return 200 immediately — Railway worker processes async
       return NextResponse.json({ ok: true });
     }
 
