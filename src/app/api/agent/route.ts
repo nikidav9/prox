@@ -472,6 +472,9 @@ export async function POST(req: NextRequest) {
     // Hold distributed lock so Railway worker doesn't double-dispatch this agent
     await acquireDispatchLock(agentId);
 
+    // Append Russian language reminder to every user message sent to the model
+    const messageForModel = message + "\n\n[ВАЖНО: отвечай ТОЛЬКО на русском языке]";
+
     const trimmedHistory = compressedHistory.filter(m => m.role === "user" || m.role === "model");
     const groqHistory = compressedHistory.filter(m => m.role === "user" || m.role === "model")
       .map(m => ({ role: (m.role === "model" ? "assistant" : "user") as "user" | "assistant", content: m.text }));
@@ -493,7 +496,7 @@ export async function POST(req: NextRequest) {
     const chatMessages = [
       { role: "system", content: systemInstruction },
       ...groqHistory,
-      { role: "user", content: message },
+      { role: "user", content: messageForModel },
     ];
     const chatTools = buildGroqTools(hasGithub);
 
@@ -604,7 +607,7 @@ export async function POST(req: NextRequest) {
             history: trimmedHistory.map(msg => ({ role: msg.role, parts: [{ text: msg.text }] })),
           });
           let result = await withTimeout(
-            chat.sendMessage(message, { generationConfig: { maxOutputTokens: 800 } } as never),
+            chat.sendMessage(messageForModel, { generationConfig: { maxOutputTokens: 800 } } as never),
             modelTimeout
           );
           for (let i = 0; i < 8; i++) {
@@ -640,7 +643,7 @@ export async function POST(req: NextRequest) {
           const groqMessages: Groq.Chat.ChatCompletionMessageParam[] = [
             { role: "system", content: systemInstruction },
             ...groqHistory,
-            { role: "user", content: message },
+            { role: "user", content: messageForModel },
           ];
           const groqTools = buildGroqTools(hasGithub);
 
