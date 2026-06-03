@@ -46,6 +46,36 @@ export async function loadAllHistories(): Promise<Record<string, ChatMsg[]>> {
   } catch { return {}; }
 }
 
+const LOCK_TTL = 90_000;
+
+export async function acquireDispatchLock(agentId: string): Promise<boolean> {
+  const sb = getClient();
+  if (!sb) return true; // no supabase = allow (dev mode)
+  const lockId = `_lock_${agentId}`;
+  try {
+    const { data } = await sb.from("chat_histories").select("messages").eq("agent_id", lockId).single();
+    const existing = (data?.messages as {ts?: number}[] | null)?.[0];
+    if (existing?.ts && existing.ts > Date.now()) return false; // locked
+    await sb.from("chat_histories").upsert(
+      { agent_id: lockId, messages: [{ role: "system", text: "lock", ts: Date.now() + LOCK_TTL }], updated_at: new Date().toISOString() },
+      { onConflict: "agent_id" }
+    );
+    return true;
+  } catch { return true; }
+}
+
+export async function releaseDispatchLock(agentId: string): Promise<void> {
+  const sb = getClient();
+  if (!sb) return;
+  const lockId = `_lock_${agentId}`;
+  try {
+    await sb.from("chat_histories").upsert(
+      { agent_id: lockId, messages: [{ role: "system", text: "lock", ts: 0 }], updated_at: new Date().toISOString() },
+      { onConflict: "agent_id" }
+    );
+  } catch {}
+}
+
 export async function clearHistory(agentId: string): Promise<void> {
   const sb = getClient();
   if (!sb) return;

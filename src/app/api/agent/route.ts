@@ -2,7 +2,7 @@ import { GoogleGenerativeAI, Tool, SchemaType } from "@google/generative-ai";
 import Groq from "groq-sdk";
 import { NextRequest, NextResponse } from "next/server";
 import { AGENTS } from "@/lib/agents";
-import { loadHistory, saveHistory, ChatMsg } from "@/lib/supabase";
+import { loadHistory, saveHistory, acquireDispatchLock, releaseDispatchLock, ChatMsg } from "@/lib/supabase";
 import { sendTelegram, getTelegramChatId } from "@/app/api/telegram/route";
 
 export const maxDuration = 60;
@@ -455,8 +455,9 @@ export async function POST(req: NextRequest) {
     const accessInfo = hasGithub
       ? `\n\n✅ ВСЕ ТОКЕНЫ УЖЕ НАСТРОЕНЫ — НЕ ПРОСИ ИХ У ПОЛЬЗОВАТЕЛЯ:\n- GitHub: токен с правами write на nikidav9/* — вызывай github_* напрямую\n- Vercel: VERCEL_TOKEN уже в env — вызывай vercel_* напрямую (vercel_list_projects, vercel_deploy и т.д.)\n- Supabase: SUPABASE_URL + SUPABASE_SERVICE_KEY в env — вызывай supabase_* напрямую\n- Railway: RAILWAY_TOKEN в env — вызывай railway_graphql напрямую\n- Telegram: TELEGRAM_BOT_TOKEN в env\nПросто вызывай инструменты — всё работает.`
       : "";
-    const systemInstruction = agent.soul
-      + "\n\n🔴 ЯЗЫК: ВСЕГДА отвечай ТОЛЬКО на русском языке. Никакого английского — ни слова."
+    const systemInstruction = "🔴🔴🔴 CRITICAL: RESPOND ONLY IN RUSSIAN. NO ENGLISH WHATSOEVER. RUSSIAN ONLY. 🔴🔴🔴\n\n"
+      + agent.soul
+      + "\n\n🔴 ЯЗЫК: АБСОЛЮТНОЕ ПРАВИЛО — отвечай ИСКЛЮЧИТЕЛЬНО на русском языке. Ни одного английского слова. Даже технические термины — по-русски или транслитом. Нарушение = провал задачи."
       + "\n\nПРАВИЛА ОТВЕТА (СТРОГО): пиши максимум 1-2 предложения. Никаких вступлений, никаких 'конечно', никаких списков. Только суть."
       + `\n\nДЕЛЕГИРОВАНИЕ ЗАДАЧ: если пользователь говорит 'дай ребятам', 'пусть команда сделает', 'поставь задачу' — сразу ставь задачи через [TASK:agentId:задание]. НЕ создавай GitHub issues вместо делегирования. Список агентов:\n${agentList}`
       + selfDelegateWarning
@@ -468,6 +469,8 @@ export async function POST(req: NextRequest) {
     const compressedHistory = await compressHistory(fullHistory);
     const userMsg: ChatMsg = { role: "user", text: message, ts: Date.now() };
     await saveHistory(agentId, [...compressedHistory, userMsg]);
+    // Hold distributed lock so Railway worker doesn't double-dispatch this agent
+    await acquireDispatchLock(agentId);
 
     const trimmedHistory = compressedHistory.filter(m => m.role === "user" || m.role === "model");
     const groqHistory = compressedHistory.filter(m => m.role === "user" || m.role === "model")
@@ -760,6 +763,7 @@ export async function POST(req: NextRequest) {
 
     const botMsg: ChatMsg = { role: "model", text, ts: Date.now(), ...(githubActions.length ? { githubActions } : {}) };
     await saveHistory(agentId, [...compressedHistory, userMsg, botMsg]);
+    await releaseDispatchLock(agentId);
 
     // Send Lena's responses to Telegram
     if (agentId === "pm") {
