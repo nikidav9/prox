@@ -15,22 +15,19 @@ type Provider = "gemini" | "groq" | "openrouter" | "cerebras";
 interface ModelEntry { id: string; provider: Provider; model: string }
 
 const MODEL_POOL: ModelEntry[] = [
-  // ── OpenRouter (20 free models) ──────────────────────────────────────
-  { id: "or-llama4-maverick",      provider: "openrouter", model: "meta-llama/llama-4-maverick:free" },
-  { id: "or-llama4-scout",         provider: "openrouter", model: "meta-llama/llama-4-scout:free" },
-  { id: "or-deepseek-v3",          provider: "openrouter", model: "deepseek/deepseek-v3-0324:free" },
-  { id: "or-deepseek-r1",          provider: "openrouter", model: "deepseek/deepseek-r1:free" },
-  { id: "or-qwen3-235b",           provider: "openrouter", model: "qwen/qwen3-235b-a22b:free" },
-  { id: "or-qwen3-30b",            provider: "openrouter", model: "qwen/qwen3-30b-a3b:free" },
-  { id: "or-kimi-k2",              provider: "openrouter", model: "moonshotai/kimi-k2:free" },
-  { id: "or-gpt-oss-120b",         provider: "openrouter", model: "openai/gpt-oss-120b:free" },
-  { id: "or-llama33-70b",          provider: "openrouter", model: "meta-llama/llama-3.3-70b-instruct:free" },
+  // ── OpenRouter (verified live 2026-06-03) ───────────────────────────
+  { id: "or-qwen3-coder",          provider: "openrouter", model: "qwen/qwen3-coder:free" },
+  { id: "or-kimi-k2-6",            provider: "openrouter", model: "moonshotai/kimi-k2.6:free" },
+  { id: "or-qwen3-next-80b",       provider: "openrouter", model: "qwen/qwen3-next-80b-a3b-instruct:free" },
+  { id: "or-nemotron-super-120b",  provider: "openrouter", model: "nvidia/nemotron-3-super-120b-a12b:free" },
   { id: "or-gemma4-31b",           provider: "openrouter", model: "google/gemma-4-31b-it:free" },
-  { id: "or-gemma3-27b",           provider: "openrouter", model: "google/gemma-3-27b-it:free" },
-  { id: "or-mistral-small",        provider: "openrouter", model: "mistralai/mistral-small-3.2-24b-instruct:free" },
-  { id: "or-deepseek-r1-llama",    provider: "openrouter", model: "deepseek/deepseek-r1-distill-llama-70b:free" },
-  { id: "or-chimera",              provider: "openrouter", model: "tngtech/deepseek-r1t-chimera:free" },
-  { id: "or-glm4-32b",             provider: "openrouter", model: "thudm/glm-4-32b:free" },
+  { id: "or-gemma4-26b",           provider: "openrouter", model: "google/gemma-4-26b-a4b-it:free" },
+  { id: "or-gpt-oss-120b",         provider: "openrouter", model: "openai/gpt-oss-120b:free" },
+  { id: "or-gpt-oss-20b",          provider: "openrouter", model: "openai/gpt-oss-20b:free" },
+  { id: "or-llama33-70b",          provider: "openrouter", model: "meta-llama/llama-3.3-70b-instruct:free" },
+  { id: "or-hermes-405b",          provider: "openrouter", model: "nousresearch/hermes-3-llama-3.1-405b:free" },
+  { id: "or-glm45-air",            provider: "openrouter", model: "z-ai/glm-4.5-air:free" },
+  { id: "or-nemotron-nano-30b",    provider: "openrouter", model: "nvidia/nemotron-3-nano-30b-a3b:free" },
   // ── Cerebras (ultra-fast, generous free limits) ──────────────────────
   { id: "cb-llama4-scout",         provider: "cerebras",   model: "llama-4-scout-17b-16e-instruct" },
   { id: "cb-llama33-70b",          provider: "cerebras",   model: "llama-3.3-70b" },
