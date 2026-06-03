@@ -280,7 +280,7 @@ Railway (полный доступ):
 - http_request — HTTP запрос к любому API (url, method, body, bearer_token, headers)
 - Используй для: Stripe, OpenAI, Telegram, любых REST API
 
-Vercel проект: prox-agents.vercel.app | Railway воркер: agent-worker (агенты 24/7)
+Vercel проект: prox-three-taupe.vercel.app | Railway воркер: agent-worker (агенты 24/7)
 Команда всегда работает в ОДНОМ репозитории — создаёшь репо первой (github_create_repo)
 
 КАК ОБРАЩАТЬСЯ К СОЗДАТЕЛЮ:

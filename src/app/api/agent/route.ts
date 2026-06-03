@@ -439,7 +439,7 @@ async function consultAgent(targetId: string, question: string, githubToken: str
   const target = AGENTS.find(a => a.id === targetId);
   if (!target) return `[агент не найден: ${targetId}. Доступные id: ${AGENTS.map(a=>a.id).join(", ")}]`;
   try {
-    const baseUrl = process.env.APP_URL || "https://prox-agents.vercel.app";
+    const baseUrl = process.env.APP_URL || "https://prox-three-taupe.vercel.app";
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 28_000);
     const res = await fetch(`${baseUrl}/api/agent`, {
@@ -668,7 +668,7 @@ export async function POST(req: NextRequest) {
             ? `Bearer ${cerebrasKey}`
             : `Bearer ${process.env.OPENROUTER_API_KEY}`;
           const extra: Record<string,string> = entry.provider === "openrouter"
-            ? { "HTTP-Referer": "https://prox-agents.vercel.app", "X-Title": "Dev Office" } : {};
+            ? { "HTTP-Referer": "https://prox-three-taupe.vercel.app", "X-Title": "Dev Office" } : {};
           if (!auth || auth === "Bearer ") continue;
           const r = await callOpenAICompat(url, auth, entry, chatMessages, chatTools, 15_000, extra);
           let curMessages = [...chatMessages];
