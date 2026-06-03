@@ -79,13 +79,13 @@ function markCooled(id: string, msg: string) {
   const waitMs = secMatch
     ? Math.ceil(parseFloat(secMatch[1]) * 1000)
     : minMatch ? parseInt(minMatch[1]) * 60_000
-    : isQuota ? 120_000 : 30_000;
+    : isQuota ? 60_000 : 15_000;
   const until = Date.now() + Math.min(waitMs + 5000, 24 * 3600_000);
   cooldowns.set(id, until);
-  // Cool all models of same provider on quota errors (they share quota)
+  // Cool all Groq models on quota (they share one API key quota)
   const entry = MODEL_POOL.find(m => m.id === id);
-  if (entry && isQuota && (entry.provider === "gemini" || entry.provider === "cerebras")) {
-    MODEL_POOL.filter(m => m.provider === entry.provider).forEach(m => cooldowns.set(m.id, until));
+  if (entry && isQuota && entry.provider === "groq") {
+    MODEL_POOL.filter(m => m.provider === "groq").forEach(m => cooldowns.set(m.id, until));
   }
 }
 
@@ -543,86 +543,12 @@ export async function POST(req: NextRequest) {
       } finally { clearTimeout(tid); }
     }
 
-    // Sequential failover: one model at a time, instant skip on quota/error
-    // Priority: Cerebras (fast) → OpenRouter (many options) as fast pool.
-    // Gemini + Groq run first as primary — most reliable for Russian language compliance.
-    // We try Gemini/Groq in the fallback section FIRST (when text is still empty).
-    const fastPool = rotatedModels().filter(e => e.provider === "cerebras" || e.provider === "openrouter");
-    let raceResult: Awaited<ReturnType<typeof callOpenAICompat>> | null = null;
-    for (const entry of fastPool) {
-      try {
-        if (entry.provider === "openrouter" && process.env.OPENROUTER_API_KEY) {
-          raceResult = await callOpenAICompat(
-            "https://openrouter.ai/api/v1/chat/completions",
-            `Bearer ${process.env.OPENROUTER_API_KEY}`,
-            entry, chatMessages, chatTools, 18_000,
-            { "HTTP-Referer": "https://prox-two-zeta.vercel.app", "X-Title": "Dev Office" }
-          );
-        } else if (entry.provider === "cerebras" && cerebrasKey) {
-          raceResult = await callOpenAICompat(
-            "https://api.cerebras.ai/v1/chat/completions",
-            `Bearer ${cerebrasKey}`,
-            entry, chatMessages, chatTools, 12_000
-          );
-        } else { continue; }
-        break;
-      } catch (e) { markCooled(entry.id, String(e)); continue; }
-    }
-
-    const orMessages = chatMessages;
-    const orTools = chatTools;
-    if (fastPool.length > 0) {
-
-      if (raceResult) {
-        const { msg, entry } = raceResult;
-        let curMessages = [...orMessages];
-        let curMsg = msg;
-        // Process tool calls in follow-up rounds
-        for (let round = 0; round < 5 && curMsg.tool_calls?.length; round++) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          curMessages.push({ role: "assistant", content: curMsg.content ?? "", ...(curMsg.tool_calls ? { tool_calls: curMsg.tool_calls } : {}) } as any);
-          for (const tc of curMsg.tool_calls) {
-            const args = JSON.parse(tc.function.arguments || "{}");
-            let toolResult: object;
-            if (tc.function.name === "consult_agent") {
-              const reply = await consultAgent(String(args.agentId), String(args.question), githubToken, _depth);
-              toolResult = { reply };
-              githubActions.push(`👥 ${args.agentId}: ${reply.slice(0, 120)}`);
-            } else {
-              toolResult = await runGithubTool(tc.function.name, args, githubToken);
-              githubActions.push(`${tc.function.name}: ${JSON.stringify(toolResult).slice(0, 150)}`);
-            }
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            curMessages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(toolResult), name: tc.function.name } as any);
-          }
-          try {
-            const followUrl = entry.provider === "cerebras"
-              ? "https://api.cerebras.ai/v1/chat/completions"
-              : "https://openrouter.ai/api/v1/chat/completions";
-            const followAuth = entry.provider === "cerebras"
-              ? `Bearer ${cerebrasKey}`
-              : `Bearer ${process.env.OPENROUTER_API_KEY}`;
-            const followExtra: Record<string,string> = entry.provider === "openrouter"
-              ? { "HTTP-Referer": "https://prox-two-zeta.vercel.app", "X-Title": "Dev Office" } : {};
-            const r2 = await callOpenAICompat(followUrl, followAuth, entry, curMessages, orTools, 15_000, followExtra);
-            curMsg = r2.msg;
-          } catch { break; }
-        }
-        text = stripThinking(curMsg.content || "");
-        if (isEnglishResponse(text)) console.log(`[lang] ${entry.id} responded in English`);
-        usedProvider = entry.id;
-      } else {
-        fastPool.forEach(e => markCooled(e.id, "all failed"));
-      }
-    }
-
-    // Primary pool: Gemini + Groq — best Russian compliance. Run ALWAYS first.
-    // If they already gave a result (text set), this pool is skipped.
-    const primaryPool = text ? [] : availableModels().filter(e => e.provider === "gemini" || e.provider === "groq");
-    // Fallback: Cerebras + OpenRouter if primary also failed
-    const fallbackPool = text ? [] : availableModels().filter(e => e.provider === "cerebras" || e.provider === "openrouter");
-    const allFallback = [...primaryPool, ...fallbackPool];
-    for (const entry of allFallback) {
+    // Single ordered pool: Gemini → Groq → Cerebras → OpenRouter
+    // Gemini + Groq first: best Russian language compliance
+    // Cerebras + OpenRouter: fast fallback with 20+ models
+    const PROVIDER_ORDER = ["gemini", "groq", "cerebras", "openrouter"];
+    const orderedPool = PROVIDER_ORDER.flatMap(p => availableModels().filter(e => e.provider === p));
+    for (const entry of orderedPool) {
       const modelTimeout = entry.provider === "gemini" ? 10_000 : 8_000;
       try {
         if (entry.provider === "gemini") {
