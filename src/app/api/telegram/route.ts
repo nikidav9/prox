@@ -6,8 +6,7 @@ const BASE_URL = process.env.VERCEL_URL
   ? `https://${process.env.VERCEL_URL}`
   : "https://prox-two-zeta.vercel.app";
 
-// Deduplicate webhook retries: Telegram retries if no 200 in 5s, but our agent takes longer.
-// We respond 200 immediately and process async. Track recent update_ids to skip duplicates.
+// Deduplicate Telegram webhook retries by update_id (in-memory, per instance)
 const recentUpdates = new Set<number>();
 
 export async function POST(req: NextRequest) {
@@ -16,12 +15,11 @@ export async function POST(req: NextRequest) {
     const msg = body?.message;
     if (!msg) return NextResponse.json({ ok: true });
 
-    // Skip duplicate webhook retries from Telegram
+    // Skip duplicate webhook retries
     const updateId: number = body?.update_id;
     if (updateId) {
       if (recentUpdates.has(updateId)) return NextResponse.json({ ok: true });
       recentUpdates.add(updateId);
-      // Clean up old entries after 60 entries to avoid memory leak
       if (recentUpdates.size > 60) {
         const first = recentUpdates.values().next().value as number;
         recentUpdates.delete(first);
@@ -32,7 +30,6 @@ export async function POST(req: NextRequest) {
     const text: string = msg.text || "";
     if (!chatId || !text) return NextResponse.json({ ok: true });
 
-    // Persist chat_id
     await saveHistory("_tg_config", [{ role: "system", text: chatId }]);
 
     if (text === "/start") {
@@ -40,26 +37,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    // Respond 200 to Telegram immediately to prevent retry, then process async.
-    // agent/route.ts sends the reply to Telegram itself when agentId === "pm".
-    void (async () => {
-      try {
-        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendChatAction`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chat_id: chatId, action: "typing" }),
-        }).catch(() => {});
+    // Typing indicator (fire-and-forget is fine here — it's just UI)
+    fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendChatAction`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, action: "typing" }),
+    }).catch(() => {});
 
-        await fetch(`${BASE_URL}/api/agent`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: text, agentId: "pm", history: [] }),
-        }).catch(() => null);
-        // Note: agent/route.ts sends Telegram reply internally — no duplicate send here
-      } catch (e) {
-        console.error("[telegram webhook async]", e);
-      }
-    })();
+    // Call agent synchronously — Vercel serverless kills async background tasks.
+    // Telegram may retry after 5s but recentUpdates deduplication handles that.
+    // Railway worker double-dispatch is prevented by acquireDispatchLock in agent/route.ts.
+    await fetch(`${BASE_URL}/api/agent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: text, agentId: "pm", history: [] }),
+    }).catch(() => null);
+    // agent/route.ts sends the Telegram reply internally — no duplicate send here
+
   } catch (e) {
     console.error("[telegram webhook]", e);
   }
