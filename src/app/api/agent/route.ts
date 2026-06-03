@@ -43,7 +43,6 @@ const MODEL_POOL: ModelEntry[] = [
   { id: "groq-llama3-70b",         provider: "groq",   model: "llama3-70b-8192" },
   { id: "groq-deepseek-r1",        provider: "groq",   model: "deepseek-r1-distill-llama-70b" },
   { id: "groq-qwq-32b",            provider: "groq",   model: "qwen-qwq-32b" },
-  { id: "groq-mixtral",            provider: "groq",   model: "mixtral-8x7b-32768" },
   { id: "groq-gemma2",             provider: "groq",   model: "gemma2-9b-it" },
   // ── Gemini (last resort) ─────────────────────────────────────────────
   { id: "gemini-2.0-flash",        provider: "gemini", model: "gemini-2.0-flash" },
@@ -71,8 +70,11 @@ function markCooled(id: string, msg: string) {
   const secMatch = msg.match(/try again in ([\d.]+)s/i) || msg.match(/retry in ([\d.]+)s/i);
   const minMatch = msg.match(/try again in (\d+)m/i);
   const isQuota = msg.includes("quota") || msg.includes("429") || msg.includes("rate") || msg.includes("limit");
-  // "No endpoints found" = model removed from provider, skip for 24h
-  const isDeadModel = msg.toLowerCase().includes("no endpoints found");
+  // Model removed/decommissioned — skip for 24h
+  const isDeadModel = msg.toLowerCase().includes("no endpoints found")
+    || msg.toLowerCase().includes("decommissioned")
+    || msg.toLowerCase().includes("no longer supported")
+    || msg.toLowerCase().includes("model not found");
   const waitMs = isDeadModel ? 24 * 3600_000
     : secMatch ? Math.ceil(parseFloat(secMatch[1]) * 1000)
     : minMatch ? parseInt(minMatch[1]) * 60_000
