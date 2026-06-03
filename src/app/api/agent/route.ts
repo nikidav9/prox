@@ -3,7 +3,7 @@ import Groq from "groq-sdk";
 import { NextRequest, NextResponse } from "next/server";
 import { AGENTS } from "@/lib/agents";
 import { loadHistory, saveHistory, acquireDispatchLock, releaseDispatchLock, ChatMsg, loadCooldowns, saveCooldowns } from "@/lib/supabase";
-import { sendTelegram, getTelegramChatId } from "@/app/api/telegram/route";
+import { sendTelegram, getTelegramChatId, getGroupInfo } from "@/app/api/telegram/route";
 
 export const maxDuration = 60;
 
@@ -410,7 +410,7 @@ function buildGroqTools(hasGithub: boolean) {
   ];
 }
 
-async function consultAgent(targetId: string, question: string, githubToken: string, depth: number): Promise<string> {
+async function consultAgent(targetId: string, question: string, githubToken: string, depth: number, groupChatId?: string, topicMap?: Record<string, number>): Promise<string> {
   if (depth >= 2) return "[максимальная глубина цепочки достигнута]";
   const target = AGENTS.find(a => a.id === targetId);
   if (!target) return `[агент не найден: ${targetId}. Доступные id: ${AGENTS.map(a=>a.id).join(", ")}]`;
@@ -418,10 +418,18 @@ async function consultAgent(targetId: string, question: string, githubToken: str
     const baseUrl = process.env.APP_URL || "https://prox-three-taupe.vercel.app";
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 28_000);
+    const targetThreadId = topicMap?.[targetId];
     const res = await fetch(`${baseUrl}/api/agent`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: question, agentId: targetId, history: [], githubToken, _depth: depth + 1 }),
+      body: JSON.stringify({
+        message: question,
+        agentId: targetId,
+        history: [],
+        githubToken,
+        _depth: depth + 1,
+        ...(groupChatId && targetThreadId ? { _groupChatId: groupChatId, _threadId: targetThreadId } : {}),
+      }),
       signal: controller.signal,
     });
     clearTimeout(tid);
@@ -480,6 +488,13 @@ export async function POST(req: NextRequest) {
       + accessInfo
       + githubInstruction;
 
+    // Load group topic map for sub-agent Telegram routing
+    let topicMap: Record<string, number> = {};
+    if (_groupChatId) {
+      const groupInfo = await getGroupInfo();
+      if (groupInfo?.topicMap) topicMap = groupInfo.topicMap;
+    }
+
     const stored: ChatMsg[] = await loadHistory(agentId);
     const fullHistory: ChatMsg[] = stored.length > 0 ? stored : (history || []);
     const compressedHistory = await compressHistory(fullHistory);
@@ -497,6 +512,10 @@ export async function POST(req: NextRequest) {
     const userMsg: ChatMsg = { role: "user", text: message, ts: Date.now() };
     const historyWithUser = isDup ? compressedHistory : [...compressedHistory, userMsg];
     await saveHistory(agentId, historyWithUser);
+
+    // Resolve group chat context early so it's available for sub-agent routing
+    const tgGroupChatId = _groupChatId || historyWithUser.filter(m => m.role === "user").at(-1)?._groupChatId;
+    const tgThreadId = _threadId || historyWithUser.filter(m => m.role === "user").at(-1)?._threadId;
 
     // Append Russian language reminder to every user message sent to the model
     const messageForModel = message + "\n\n[ВАЖНО: отвечай ТОЛЬКО на русском языке]";
@@ -581,7 +600,7 @@ export async function POST(req: NextRequest) {
               let toolResult: object;
               if (fc.name === "consult_agent") {
                 const args = fc.args as Record<string,unknown>;
-                const reply = await consultAgent(String(args.agentId), String(args.question), githubToken, _depth);
+                const reply = await consultAgent(String(args.agentId), String(args.question), githubToken, _depth, tgGroupChatId ? String(tgGroupChatId) : undefined, topicMap);
                 toolResult = { reply };
                 githubActions.push(`👥 ${args.agentId}: ${reply.slice(0, 120)}`);
               } else {
@@ -624,7 +643,7 @@ export async function POST(req: NextRequest) {
               const args = JSON.parse(tc.function.arguments || "{}");
               let toolResult: object;
               if (tc.function.name === "consult_agent") {
-                const reply = await consultAgent(String(args.agentId), String(args.question), githubToken, _depth);
+                const reply = await consultAgent(String(args.agentId), String(args.question), githubToken, _depth, tgGroupChatId ? String(tgGroupChatId) : undefined, topicMap);
                 toolResult = { reply };
                 githubActions.push(`👥 ${args.agentId}: ${reply.slice(0, 120)}`);
               } else {
@@ -657,7 +676,7 @@ export async function POST(req: NextRequest) {
               const args = JSON.parse(tc.function.arguments || "{}");
               let toolResult: object;
               if (tc.function.name === "consult_agent") {
-                const reply = await consultAgent(String(args.agentId), String(args.question), githubToken, _depth);
+                const reply = await consultAgent(String(args.agentId), String(args.question), githubToken, _depth, tgGroupChatId ? String(tgGroupChatId) : undefined, topicMap);
                 toolResult = { reply };
                 githubActions.push(`👥 ${args.agentId}: ${reply.slice(0, 120)}`);
               } else {
@@ -734,7 +753,14 @@ export async function POST(req: NextRequest) {
           ? `${question}\n\nКогда выполнишь — добавь [TASK:pm:Готово: краткий итог что сделал]`
           : question;
         const existing = await loadHistory(tId);
-        await saveHistory(tId, [...existing, { role: "user", text: finalTask }]);
+        const targetThread = tgGroupChatId ? topicMap[tId] : undefined;
+        const taskMsg: ChatMsg = {
+          role: "user",
+          text: finalTask,
+          ts: Date.now(),
+          ...(tgGroupChatId && targetThread ? { _groupChatId: String(tgGroupChatId), _threadId: targetThread } : {}),
+        };
+        await saveHistory(tId, [...existing, taskMsg]);
         githubActions.push(`👥 ${tId}: ${taskWithCallback.slice(0, 100)}`);
       }));
       text = text
@@ -768,11 +794,6 @@ export async function POST(req: NextRequest) {
     const botMsg: ChatMsg = { role: "model", text, ts: Date.now(), ...(githubActions.length ? { githubActions } : {}) };
     await saveHistory(agentId, [...historyWithUser, botMsg]);
     await releaseDispatchLock(agentId);
-
-    // Send agent responses to Telegram
-    // Resolve group context: from request params OR from last user message metadata
-    const tgGroupChatId = _groupChatId || historyWithUser.filter(m => m.role === "user").at(-1)?._groupChatId;
-    const tgThreadId = _threadId || historyWithUser.filter(m => m.role === "user").at(-1)?._threadId;
 
     // Case 1: message came from a group topic → reply in same topic
     if (tgGroupChatId && tgThreadId) {
