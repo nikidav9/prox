@@ -104,6 +104,15 @@ function stripThinking(text: string): string {
   return text.trim();
 }
 
+// Returns true if response is predominantly English (model ignored Russian instruction)
+function isEnglishResponse(text: string): boolean {
+  if (!text || text.length < 20) return false;
+  const cyrillic = (text.match(/[а-яёА-ЯЁ]/g) || []).length;
+  const latin = (text.match(/[a-zA-Z]/g) || []).length;
+  // If less than 10% Cyrillic and more than 40 Latin chars — it's English
+  return latin > 40 && cyrillic < latin * 0.1;
+}
+
 async function githubFetch(token: string, path: string, method = "GET", body?: object) {
   const res = await fetch(`https://api.github.com${path}`, {
     method,
@@ -554,6 +563,9 @@ export async function POST(req: NextRequest) {
             entry, chatMessages, chatTools, 12_000
           );
         } else { continue; }
+        // Quick check: if model responded in English, skip it immediately
+        const previewText = stripThinking(raceResult?.msg?.content || "");
+        if (isEnglishResponse(previewText)) { markCooled(entry.id, "english response"); raceResult = null; continue; }
         break;
       } catch (e) { markCooled(entry.id, String(e)); continue; }
     }
@@ -598,7 +610,12 @@ export async function POST(req: NextRequest) {
           } catch { break; }
         }
         text = stripThinking(curMsg.content || "");
-        usedProvider = entry.id;
+        if (isEnglishResponse(text)) {
+          markCooled(entry.id, "english response");
+          text = ""; // fall through to Groq/Gemini fallback
+        } else {
+          usedProvider = entry.id;
+        }
       } else {
         fastPool.forEach(e => markCooled(e.id, "all failed"));
       }
@@ -647,6 +664,11 @@ export async function POST(req: NextRequest) {
             );
           }
           text = stripThinking(result.response.text());
+          if (isEnglishResponse(text)) {
+            markCooled(entry.id, "english response");
+            text = "";
+            continue;
+          }
           usedProvider = entry.id;
           break;
 
@@ -683,6 +705,11 @@ export async function POST(req: NextRequest) {
               }
               groqMessages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(toolResult) });
             }
+          }
+          if (isEnglishResponse(text)) {
+            markCooled(entry.id, "english response");
+            text = "";
+            continue;
           }
           usedProvider = entry.id;
           break;
