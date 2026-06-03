@@ -71,10 +71,13 @@ function markCooled(id: string, msg: string) {
   const secMatch = msg.match(/try again in ([\d.]+)s/i) || msg.match(/retry in ([\d.]+)s/i);
   const minMatch = msg.match(/try again in (\d+)m/i);
   const isQuota = msg.includes("quota") || msg.includes("429") || msg.includes("rate") || msg.includes("limit");
-  const waitMs = secMatch
-    ? Math.ceil(parseFloat(secMatch[1]) * 1000)
+  // "No endpoints found" = model removed from provider, skip for 24h
+  const isDeadModel = msg.toLowerCase().includes("no endpoints found");
+  const waitMs = isDeadModel ? 24 * 3600_000
+    : secMatch ? Math.ceil(parseFloat(secMatch[1]) * 1000)
     : minMatch ? parseInt(minMatch[1]) * 60_000
     : isQuota ? 60_000 : 15_000;
+  if (isDeadModel) console.warn(`[agent] dead model skipped for 24h: ${id} — ${msg}`);
   const until = Date.now() + Math.min(waitMs + 5000, 24 * 3600_000);
   cooldowns.set(id, until);
   // Cool all Groq models on quota (they share one API key quota)
