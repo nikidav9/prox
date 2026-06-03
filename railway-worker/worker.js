@@ -30,7 +30,7 @@ async function tick() {
       fetch(`${AGENT_URL}/api/agent`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: last.text, agentId: agent_id, history: [] }),
+        body: JSON.stringify({ message: last.text, agentId: agent_id, history: [], _workerDispatch: true }),
       })
         .then(r => r.json())
         .then(d => {

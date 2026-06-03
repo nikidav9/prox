@@ -473,7 +473,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const { message, agentId, history, githubToken: clientToken, _depth = 0, _groupChatId, _threadId } = await req.json();
+    const { message, agentId, history, githubToken: clientToken, _depth = 0, _groupChatId, _threadId, _workerDispatch } = await req.json();
     if (!message || !agentId) return NextResponse.json({ error: "message and agentId required" }, { status: 400 });
     const agent = AGENTS.find((a) => a.id === agentId);
     if (!agent) return NextResponse.json({ error: "Unknown agent" }, { status: 400 });
@@ -507,11 +507,12 @@ export async function POST(req: NextRequest) {
     const stored: ChatMsg[] = await loadHistory(agentId);
     const fullHistory: ChatMsg[] = stored.length > 0 ? stored : (history || []);
     const compressedHistory = await compressHistory(fullHistory);
-    // Acquire lock BEFORE saving userMsg — prevents Railway worker from
-    // seeing a "user" last-message and re-dispatching while we're running
-    const lockAcquired = await acquireDispatchLock(agentId);
-    if (!lockAcquired) {
-      return NextResponse.json({ error: "Агент занят, попробуйте через несколько секунд" }, { status: 409 });
+    // Worker already holds its own in-memory lock (inFlight set), skip Supabase lock check
+    if (!_workerDispatch) {
+      const lockAcquired = await acquireDispatchLock(agentId);
+      if (!lockAcquired) {
+        return NextResponse.json({ error: "Агент занят, попробуйте через несколько секунд" }, { status: 409 });
+      }
     }
 
     // Dedup: don't append if last stored message is identical user message
