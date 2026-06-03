@@ -800,7 +800,8 @@ export default function Home(){
             const merged={...prev};
             for(const [id,msgs] of Object.entries(data) as [string,ChatMsg[]][]){
               const localLen=(prev[id]||[]).length;
-              if(!sendingRef.current.has(id) && msgs.length >= localLen){
+              // API is authoritative: always apply if empty (cleared) or longer than local
+              if(!sendingRef.current.has(id) && (msgs.length === 0 || msgs.length >= localLen)){
                 merged[id]=msgs;
               }
               // Auto-dispatch any user message at the end that hasn't been dispatched yet
