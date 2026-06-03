@@ -43,7 +43,7 @@ const MODEL_POOL: ModelEntry[] = [
   { id: "groq-gemma2",             provider: "groq",   model: "gemma2-9b-it" },
   // ── Gemini (last resort) ─────────────────────────────────────────────
   { id: "gemini-2.0-flash",        provider: "gemini", model: "gemini-2.0-flash" },
-  { id: "gemini-2.5-flash",        provider: "gemini", model: "gemini-2.5-flash-preview-05-20" },
+  { id: "gemini-2.5-flash",        provider: "gemini", model: "gemini-2.5-flash" },
 ];
 
 const cooldowns = new Map<string, number>();
@@ -71,7 +71,8 @@ function markCooled(id: string, msg: string) {
   const isDeadModel = msg.toLowerCase().includes("no endpoints found")
     || msg.toLowerCase().includes("decommissioned")
     || msg.toLowerCase().includes("no longer supported")
-    || msg.toLowerCase().includes("model not found");
+    || msg.toLowerCase().includes("model not found")
+    || msg.includes("404 Not Found");
   // OpenRouter account daily free limit — cool ALL openrouter models until midnight UTC
   const isOrDailyLimit = msg.toLowerCase().includes("free-models-per-day");
   const waitMs = isDeadModel || isOrDailyLimit ? 24 * 3600_000
