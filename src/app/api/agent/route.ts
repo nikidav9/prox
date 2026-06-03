@@ -2,7 +2,7 @@ import { GoogleGenerativeAI, Tool, SchemaType } from "@google/generative-ai";
 import Groq from "groq-sdk";
 import { NextRequest, NextResponse } from "next/server";
 import { AGENTS } from "@/lib/agents";
-import { loadHistory, saveHistory, acquireDispatchLock, releaseDispatchLock, ChatMsg } from "@/lib/supabase";
+import { loadHistory, saveHistory, acquireDispatchLock, releaseDispatchLock, ChatMsg, loadCooldowns, saveCooldowns } from "@/lib/supabase";
 import { sendTelegram, getTelegramChatId } from "@/app/api/telegram/route";
 
 export const maxDuration = 60;
@@ -44,7 +44,25 @@ const MODEL_POOL: ModelEntry[] = [
 ];
 
 const cooldowns = new Map<string, number>();
-let roundRobinIdx = 0; // rotate starting model to spread load evenly
+let roundRobinIdx = 0;
+let cooldownsLoaded = false;
+
+async function ensureCooldownsLoaded() {
+  if (cooldownsLoaded) return;
+  cooldownsLoaded = true;
+  const data = await loadCooldowns();
+  const now = Date.now();
+  for (const [id, until] of Object.entries(data)) {
+    if (until > now) cooldowns.set(id, until);
+  }
+}
+
+async function persistCooldown(id: string, until: number) {
+  cooldowns.set(id, until);
+  const snapshot: Record<string, number> = {};
+  cooldowns.forEach((v, k) => { if (v > Date.now()) snapshot[k] = v; });
+  await saveCooldowns(snapshot);
+}
 
 function availableModels(): ModelEntry[] {
   const now = Date.now();
@@ -60,7 +78,7 @@ function rotatedModels(): ModelEntry[] {
   return [...avail.slice(start), ...avail.slice(0, start)];
 }
 
-function markCooled(id: string, msg: string) {
+async function markCooled(id: string, msg: string) {
   const secMatch = msg.match(/try again in ([\d.]+)s/i) || msg.match(/retry in ([\d.]+)s/i);
   const minMatch = msg.match(/try again in (\d+)m/i);
   const isQuota = msg.includes("quota") || msg.includes("429") || msg.includes("rate") || msg.includes("limit");
@@ -70,7 +88,7 @@ function markCooled(id: string, msg: string) {
     || msg.toLowerCase().includes("no longer supported")
     || msg.toLowerCase().includes("model not found")
     || msg.includes("404 Not Found");
-  // OpenRouter account daily free limit — cool ALL openrouter models until midnight UTC
+  // OpenRouter account daily free limit — cool ALL openrouter models for 24h
   const isOrDailyLimit = msg.toLowerCase().includes("free-models-per-day");
   const waitMs = isDeadModel || isOrDailyLimit ? 24 * 3600_000
     : secMatch ? Math.ceil(parseFloat(secMatch[1]) * 1000)
@@ -78,9 +96,8 @@ function markCooled(id: string, msg: string) {
     : isQuota ? 60_000 : 15_000;
   if (isDeadModel) console.warn(`[agent] dead model skipped for 24h: ${id} — ${msg}`);
   const until = Date.now() + Math.min(waitMs + 5000, 24 * 3600_000);
-  cooldowns.set(id, until);
   const entry = MODEL_POOL.find(m => m.id === id);
-  // Cool all Groq models on quota (they share one API key quota)
+  // Cool all Groq models on quota (shared quota)
   if (entry && isQuota && entry.provider === "groq") {
     MODEL_POOL.filter(m => m.provider === "groq").forEach(m => cooldowns.set(m.id, until));
   }
@@ -89,6 +106,7 @@ function markCooled(id: string, msg: string) {
     console.warn(`[agent] OpenRouter daily free limit — cooling all OR models for 24h`);
     MODEL_POOL.filter(m => m.provider === "openrouter").forEach(m => cooldowns.set(m.id, until));
   }
+  await persistCooldown(id, until);
 }
 
 async function compressHistory(messages: ChatMsg[]): Promise<ChatMsg[]> {
@@ -548,10 +566,11 @@ export async function POST(req: NextRequest) {
     // Single ordered pool: Gemini → Groq → Cerebras → OpenRouter
     // Gemini + Groq first: best Russian language compliance
     // Cerebras + OpenRouter: fast fallback with 20+ models
+    await ensureCooldownsLoaded();
     const PROVIDER_ORDER = ["gemini", "groq", "cerebras", "openrouter"];
     const orderedPool = PROVIDER_ORDER.flatMap(p => availableModels().filter(e => e.provider === p));
     for (const entry of orderedPool) {
-      const modelTimeout = entry.provider === "gemini" ? 10_000 : 8_000;
+      const modelTimeout = entry.provider === "gemini" ? 8_000 : 5_000;
       try {
         if (entry.provider === "gemini") {
           const gModel = genAI.getGenerativeModel({
@@ -675,7 +694,7 @@ export async function POST(req: NextRequest) {
       } catch (err) {
         const errMsg = String(err);
         lastError = errMsg;
-        markCooled(entry.id, errMsg);
+        await markCooled(entry.id, errMsg);
         console.log(`[rotation] ${entry.id} failed (${errMsg.slice(0, 80)}), trying next...`);
         continue;
       }

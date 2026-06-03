@@ -76,6 +76,26 @@ export async function releaseDispatchLock(agentId: string): Promise<void> {
   } catch {}
 }
 
+export async function loadCooldowns(): Promise<Record<string, number>> {
+  const sb = getClient();
+  if (!sb) return {};
+  try {
+    const { data } = await sb.from("chat_histories").select("messages").eq("agent_id", "_cooldowns").single();
+    return (data?.messages as unknown as Record<string, number>) || {};
+  } catch { return {}; }
+}
+
+export async function saveCooldowns(data: Record<string, number>): Promise<void> {
+  const sb = getClient();
+  if (!sb) return;
+  try {
+    await sb.from("chat_histories").upsert(
+      { agent_id: "_cooldowns", messages: data as unknown as ChatMsg[], updated_at: new Date().toISOString() },
+      { onConflict: "agent_id" }
+    );
+  } catch {}
+}
+
 export async function clearHistory(agentId: string): Promise<void> {
   const sb = getClient();
   if (!sb) return;
