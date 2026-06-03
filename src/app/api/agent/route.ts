@@ -33,15 +33,12 @@ const MODEL_POOL: ModelEntry[] = [
   { id: "cb-llama33-70b",          provider: "cerebras",   model: "llama-3.3-70b" },
   { id: "cb-llama31-70b",          provider: "cerebras",   model: "llama3.1-70b" },
   { id: "cb-qwen3-32b",            provider: "cerebras",   model: "qwen-3-32b" },
-  // ── Groq (fast, daily quota) ─────────────────────────────────────────
-  { id: "groq-llama4-maverick",    provider: "groq",   model: "meta-llama/llama-4-maverick-17b-128e-instruct" },
+  // ── Groq (verified live 2026-06-03) ─────────────────────────────────
   { id: "groq-llama4-scout",       provider: "groq",   model: "meta-llama/llama-4-scout-17b-16e-instruct" },
   { id: "groq-llama33-70b",        provider: "groq",   model: "llama-3.3-70b-versatile" },
-  { id: "groq-llama3-70b",         provider: "groq",   model: "llama3-70b-8192" },
-  { id: "groq-deepseek-r1",        provider: "groq",   model: "deepseek-r1-distill-llama-70b" },
-  { id: "groq-qwq-32b",            provider: "groq",   model: "qwen-qwq-32b" },
-  { id: "groq-gemma2",             provider: "groq",   model: "gemma2-9b-it" },
-  // ── Gemini (last resort) ─────────────────────────────────────────────
+  { id: "groq-llama31-8b",         provider: "groq",   model: "llama-3.1-8b-instant" },
+  { id: "groq-qwen3-32b",          provider: "groq",   model: "qwen/qwen3-32b" },
+  // ── Gemini ────────────────────────────────────────────────────────────
   { id: "gemini-2.0-flash",        provider: "gemini", model: "gemini-2.0-flash" },
   { id: "gemini-2.5-flash",        provider: "gemini", model: "gemini-2.5-flash" },
 ];
