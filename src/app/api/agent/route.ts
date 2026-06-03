@@ -544,8 +544,10 @@ export async function POST(req: NextRequest) {
     }
 
     // Sequential failover: one model at a time, instant skip on quota/error
-    // rotatedModels() distributes load evenly — each request starts from different model
-    const fastPool = rotatedModels().filter(e => e.provider === "openrouter" || e.provider === "cerebras");
+    // Priority: Cerebras (fast) → OpenRouter (many options) as fast pool.
+    // Gemini + Groq run first as primary — most reliable for Russian language compliance.
+    // We try Gemini/Groq in the fallback section FIRST (when text is still empty).
+    const fastPool = rotatedModels().filter(e => e.provider === "cerebras" || e.provider === "openrouter");
     let raceResult: Awaited<ReturnType<typeof callOpenAICompat>> | null = null;
     for (const entry of fastPool) {
       try {
@@ -614,9 +616,13 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Fallback: sequential Groq / Gemini if race didn't produce text
-    const fallbackPool = text ? [] : availableModels().filter(e => e.provider !== "openrouter" && e.provider !== "cerebras");
-    for (const entry of fallbackPool) {
+    // Primary pool: Gemini + Groq — best Russian compliance. Run ALWAYS first.
+    // If they already gave a result (text set), this pool is skipped.
+    const primaryPool = text ? [] : availableModels().filter(e => e.provider === "gemini" || e.provider === "groq");
+    // Fallback: Cerebras + OpenRouter if primary also failed
+    const fallbackPool = text ? [] : availableModels().filter(e => e.provider === "cerebras" || e.provider === "openrouter");
+    const allFallback = [...primaryPool, ...fallbackPool];
+    for (const entry of allFallback) {
       const modelTimeout = entry.provider === "gemini" ? 10_000 : 8_000;
       try {
         if (entry.provider === "gemini") {
@@ -695,6 +701,45 @@ export async function POST(req: NextRequest) {
               groqMessages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(toolResult) });
             }
           }
+          if (isEnglishResponse(text)) console.log(`[lang] ${entry.id} responded in English`);
+          usedProvider = entry.id;
+          break;
+        } else if (entry.provider === "cerebras" || entry.provider === "openrouter") {
+          const url = entry.provider === "cerebras"
+            ? "https://api.cerebras.ai/v1/chat/completions"
+            : "https://openrouter.ai/api/v1/chat/completions";
+          const auth = entry.provider === "cerebras"
+            ? `Bearer ${cerebrasKey}`
+            : `Bearer ${process.env.OPENROUTER_API_KEY}`;
+          const extra: Record<string,string> = entry.provider === "openrouter"
+            ? { "HTTP-Referer": "https://prox-two-zeta.vercel.app", "X-Title": "Dev Office" } : {};
+          if (!auth || auth === "Bearer ") continue;
+          const r = await callOpenAICompat(url, auth, entry, chatMessages, chatTools, 15_000, extra);
+          let curMessages = [...chatMessages];
+          let curMsg = r.msg;
+          for (let round = 0; round < 5 && curMsg.tool_calls?.length; round++) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            curMessages.push({ role: "assistant", content: curMsg.content ?? "", ...(curMsg.tool_calls ? { tool_calls: curMsg.tool_calls } : {}) } as any);
+            for (const tc of curMsg.tool_calls) {
+              const args = JSON.parse(tc.function.arguments || "{}");
+              let toolResult: object;
+              if (tc.function.name === "consult_agent") {
+                const reply = await consultAgent(String(args.agentId), String(args.question), githubToken, _depth);
+                toolResult = { reply };
+                githubActions.push(`👥 ${args.agentId}: ${reply.slice(0, 120)}`);
+              } else {
+                toolResult = await runGithubTool(tc.function.name, args, githubToken);
+                githubActions.push(`${tc.function.name}: ${JSON.stringify(toolResult).slice(0, 150)}`);
+              }
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              curMessages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(toolResult), name: tc.function.name } as any);
+            }
+            try {
+              const r2 = await callOpenAICompat(url, auth, entry, curMessages, chatTools, 15_000, extra);
+              curMsg = r2.msg;
+            } catch { break; }
+          }
+          text = stripThinking(curMsg.content || "");
           if (isEnglishResponse(text)) console.log(`[lang] ${entry.id} responded in English`);
           usedProvider = entry.id;
           break;
