@@ -72,17 +72,24 @@ function markCooled(id: string, msg: string) {
     || msg.toLowerCase().includes("decommissioned")
     || msg.toLowerCase().includes("no longer supported")
     || msg.toLowerCase().includes("model not found");
-  const waitMs = isDeadModel ? 24 * 3600_000
+  // OpenRouter account daily free limit — cool ALL openrouter models until midnight UTC
+  const isOrDailyLimit = msg.toLowerCase().includes("free-models-per-day");
+  const waitMs = isDeadModel || isOrDailyLimit ? 24 * 3600_000
     : secMatch ? Math.ceil(parseFloat(secMatch[1]) * 1000)
     : minMatch ? parseInt(minMatch[1]) * 60_000
     : isQuota ? 60_000 : 15_000;
   if (isDeadModel) console.warn(`[agent] dead model skipped for 24h: ${id} — ${msg}`);
   const until = Date.now() + Math.min(waitMs + 5000, 24 * 3600_000);
   cooldowns.set(id, until);
-  // Cool all Groq models on quota (they share one API key quota)
   const entry = MODEL_POOL.find(m => m.id === id);
+  // Cool all Groq models on quota (they share one API key quota)
   if (entry && isQuota && entry.provider === "groq") {
     MODEL_POOL.filter(m => m.provider === "groq").forEach(m => cooldowns.set(m.id, until));
+  }
+  // Cool ALL OpenRouter models when daily free limit is hit
+  if (isOrDailyLimit) {
+    console.warn(`[agent] OpenRouter daily free limit — cooling all OR models for 24h`);
+    MODEL_POOL.filter(m => m.provider === "openrouter").forEach(m => cooldowns.set(m.id, until));
   }
 }
 
