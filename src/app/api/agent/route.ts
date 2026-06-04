@@ -445,12 +445,10 @@ export async function POST(req: NextRequest) {
       + accessInfo
       + githubInstruction;
 
-    // Load group topic map for sub-agent Telegram routing
-    let topicMap: Record<string, number> = {};
-    if (_groupChatId) {
-      const groupInfo = await getGroupInfo();
-      if (groupInfo?.topicMap) topicMap = groupInfo.topicMap;
-    }
+    // Загружаем конфиг группы всегда — нужен для routing задач в темы Telegram
+    const groupInfo = await getGroupInfo();
+    const topicMap: Record<string, number> = groupInfo?.topicMap ?? {};
+    const groupIdFromConfig = groupInfo?.groupId ?? "";
 
     const stored: ChatMsg[] = await loadHistory(agentId);
     const fullHistory: ChatMsg[] = stored.length > 0 ? stored : (history || []);
@@ -470,9 +468,13 @@ export async function POST(req: NextRequest) {
     const historyWithUser = isDup ? compressedHistory : [...compressedHistory, userMsg];
     await saveHistory(agentId, historyWithUser);
 
-    // Resolve group chat context early so it's available for sub-agent routing
-    const tgGroupChatId = _groupChatId || historyWithUser.filter(m => m.role === "user").at(-1)?._groupChatId;
-    const tgThreadId = _threadId || historyWithUser.filter(m => m.role === "user").at(-1)?._threadId;
+    // Resolve group chat context: из запроса → из истории → из конфига группы
+    const tgGroupChatId = _groupChatId
+      || historyWithUser.filter(m => m.role === "user").at(-1)?._groupChatId
+      || groupIdFromConfig;
+    const tgThreadId = _threadId
+      || historyWithUser.filter(m => m.role === "user").at(-1)?._threadId
+      || topicMap[agentId];
 
     // Append Russian language reminder to every user message sent to the model
     const messageForModel = message + "\n\n[ВАЖНО: отвечай ТОЛЬКО на русском языке]";
