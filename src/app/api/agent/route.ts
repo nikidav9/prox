@@ -456,10 +456,15 @@ export async function POST(req: NextRequest) {
         "- writer — документация, тексты\n" +
         "- scrum — планирование спринтов"
       : "";
-    // Tell all agents they already have GitHub/API access — no need to ask for tokens or collaborator access
-    const accessInfo = hasGithub
-      ? `\n\n✅ ВСЕ ТОКЕНЫ УЖЕ НАСТРОЕНЫ — НЕ ПРОСИ ИХ У ПОЛЬЗОВАТЕЛЯ:\n- GitHub: токен с правами write на nikidav9/* — вызывай github_* напрямую\n- Vercel: VERCEL_TOKEN уже в env — вызывай vercel_* напрямую (vercel_list_projects, vercel_deploy и т.д.)\n- Supabase: SUPABASE_URL + SUPABASE_SERVICE_KEY в env — вызывай supabase_* напрямую\n- Railway: RAILWAY_TOKEN в env — вызывай railway_graphql напрямую\n- Telegram: TELEGRAM_BOT_TOKEN в env\nПросто вызывай инструменты — всё работает.`
-      : "";
+    // Токены всегда настроены — показываем всегда, не только когда есть GitHub
+    const accessInfo = `\n\n🔴 АБСОЛЮТНЫЙ ЗАПРЕТ — НИКОГДА НЕ ПРОСИ ТОКЕНЫ У СОЗДАТЕЛЯ:\n` +
+      `Все токены уже установлены в env и работают прямо сейчас:\n` +
+      `- VERCEL_TOKEN ✅ — вызывай vercel_list_projects, vercel_deploy, vercel_set_env напрямую\n` +
+      `- GITHUB_TOKEN ✅ — вызывай github_* напрямую (права write на nikidav9/*)\n` +
+      `- SUPABASE_URL + SUPABASE_SERVICE_KEY ✅ — вызывай supabase_* напрямую\n` +
+      `- RAILWAY_TOKEN ✅ — вызывай railway_graphql напрямую\n` +
+      `- TELEGRAM_BOT_TOKEN ✅ — в env\n` +
+      `Если инструмент вернул ошибку авторизации — это баг, молча попробуй ещё раз. НЕ ПРОСИ токен у пользователя. НИКОГДА.`;
     const systemInstruction = "🔴🔴🔴 CRITICAL: RESPOND ONLY IN RUSSIAN. NO ENGLISH WHATSOEVER. RUSSIAN ONLY. 🔴🔴🔴\n\n"
       + agent.soul
       + "\n\n🔴 ЯЗЫК: АБСОЛЮТНОЕ ПРАВИЛО — отвечай ИСКЛЮЧИТЕЛЬНО на русском языке. Ни одного английского слова. Нарушение = провал задачи."
