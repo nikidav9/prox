@@ -4,7 +4,7 @@ import { loadHistory, saveHistory, ChatMsg } from "@/lib/supabase";
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const BASE_URL = process.env.VERCEL_URL
   ? `https://${process.env.VERCEL_URL}`
-  : "https://prox-agents.vercel.app";
+  : "https://prox-three-taupe.vercel.app";
 
 // Deduplicate Telegram webhook retries by update_id (in-memory, per instance)
 const recentUpdates = new Set<number>();

@@ -1,46 +1,19 @@
 import { GoogleGenerativeAI, Tool, SchemaType } from "@google/generative-ai";
-import Groq from "groq-sdk";
 import { NextRequest, NextResponse } from "next/server";
 import { AGENTS } from "@/lib/agents";
-import { loadHistory, saveHistory, acquireDispatchLock, releaseDispatchLock, ChatMsg, loadCooldowns, saveCooldowns } from "@/lib/supabase";
-import { sendTelegram, getTelegramChatId } from "@/app/api/telegram/route";
+import { loadHistory, saveHistory, acquireDispatchLock, releaseDispatchLock, ChatMsg, loadCooldowns, saveCooldowns, loadProjectRepo, saveProjectRepo } from "@/lib/supabase";
+import { sendTelegram, getTelegramChatId, getGroupInfo } from "@/app/api/telegram/route";
 
 export const maxDuration = 60;
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
-const cerebrasKey = process.env.CEREBRAS_API_KEY || "";
 
-type Provider = "gemini" | "groq" | "openrouter" | "cerebras";
+type Provider = "gemini";
 interface ModelEntry { id: string; provider: Provider; model: string }
 
 const MODEL_POOL: ModelEntry[] = [
-  // ── OpenRouter (verified live 2026-06-03) ───────────────────────────
-  { id: "or-qwen3-coder",          provider: "openrouter", model: "qwen/qwen3-coder:free" },
-  { id: "or-kimi-k2-6",            provider: "openrouter", model: "moonshotai/kimi-k2.6:free" },
-  { id: "or-qwen3-next-80b",       provider: "openrouter", model: "qwen/qwen3-next-80b-a3b-instruct:free" },
-  { id: "or-nemotron-super-120b",  provider: "openrouter", model: "nvidia/nemotron-3-super-120b-a12b:free" },
-  { id: "or-gemma4-31b",           provider: "openrouter", model: "google/gemma-4-31b-it:free" },
-  { id: "or-gemma4-26b",           provider: "openrouter", model: "google/gemma-4-26b-a4b-it:free" },
-  { id: "or-gpt-oss-120b",         provider: "openrouter", model: "openai/gpt-oss-120b:free" },
-  { id: "or-gpt-oss-20b",          provider: "openrouter", model: "openai/gpt-oss-20b:free" },
-  { id: "or-llama33-70b",          provider: "openrouter", model: "meta-llama/llama-3.3-70b-instruct:free" },
-  { id: "or-hermes-405b",          provider: "openrouter", model: "nousresearch/hermes-3-llama-3.1-405b:free" },
-  { id: "or-glm45-air",            provider: "openrouter", model: "z-ai/glm-4.5-air:free" },
-  { id: "or-nemotron-nano-30b",    provider: "openrouter", model: "nvidia/nemotron-3-nano-30b-a3b:free" },
-  // ── Cerebras (ultra-fast, generous free limits) ──────────────────────
-  { id: "cb-llama4-scout",         provider: "cerebras",   model: "llama-4-scout-17b-16e-instruct" },
-  { id: "cb-llama33-70b",          provider: "cerebras",   model: "llama-3.3-70b" },
-  { id: "cb-llama31-70b",          provider: "cerebras",   model: "llama3.1-70b" },
-  { id: "cb-qwen3-32b",            provider: "cerebras",   model: "qwen-3-32b" },
-  // ── Groq (verified live 2026-06-03) ─────────────────────────────────
-  { id: "groq-llama4-scout",       provider: "groq",   model: "meta-llama/llama-4-scout-17b-16e-instruct" },
-  { id: "groq-llama33-70b",        provider: "groq",   model: "llama-3.3-70b-versatile" },
-  { id: "groq-llama31-8b",         provider: "groq",   model: "llama-3.1-8b-instant" },
-  { id: "groq-qwen3-32b",          provider: "groq",   model: "qwen/qwen3-32b" },
-  // ── Gemini ────────────────────────────────────────────────────────────
-  { id: "gemini-2.0-flash",        provider: "gemini", model: "gemini-2.0-flash" },
-  { id: "gemini-2.5-flash",        provider: "gemini", model: "gemini-2.5-flash" },
+  { id: "gemini-2.0-flash", provider: "gemini", model: "gemini-2.0-flash" },
+  { id: "gemini-2.5-flash", provider: "gemini", model: "gemini-2.5-flash" },
 ];
 
 const cooldowns = new Map<string, number>();
@@ -82,30 +55,10 @@ async function markCooled(id: string, msg: string) {
   const secMatch = msg.match(/try again in ([\d.]+)s/i) || msg.match(/retry in ([\d.]+)s/i);
   const minMatch = msg.match(/try again in (\d+)m/i);
   const isQuota = msg.includes("quota") || msg.includes("429") || msg.includes("rate") || msg.includes("limit");
-  // Model removed/decommissioned — skip for 24h
-  const isDeadModel = msg.toLowerCase().includes("no endpoints found")
-    || msg.toLowerCase().includes("decommissioned")
-    || msg.toLowerCase().includes("no longer supported")
-    || msg.toLowerCase().includes("model not found")
-    || msg.includes("404 Not Found");
-  // OpenRouter account daily free limit — cool ALL openrouter models for 24h
-  const isOrDailyLimit = msg.toLowerCase().includes("free-models-per-day");
-  const waitMs = isDeadModel || isOrDailyLimit ? 24 * 3600_000
-    : secMatch ? Math.ceil(parseFloat(secMatch[1]) * 1000)
+  const waitMs = secMatch ? Math.ceil(parseFloat(secMatch[1]) * 1000)
     : minMatch ? parseInt(minMatch[1]) * 60_000
     : isQuota ? 60_000 : 15_000;
-  if (isDeadModel) console.warn(`[agent] dead model skipped for 24h: ${id} — ${msg}`);
   const until = Date.now() + Math.min(waitMs + 5000, 24 * 3600_000);
-  const entry = MODEL_POOL.find(m => m.id === id);
-  // Cool all Groq models on quota (shared quota)
-  if (entry && isQuota && entry.provider === "groq") {
-    MODEL_POOL.filter(m => m.provider === "groq").forEach(m => cooldowns.set(m.id, until));
-  }
-  // Cool ALL OpenRouter models when daily free limit is hit
-  if (isOrDailyLimit) {
-    console.warn(`[agent] OpenRouter daily free limit — cooling all OR models for 24h`);
-    MODEL_POOL.filter(m => m.provider === "openrouter").forEach(m => cooldowns.set(m.id, until));
-  }
   await persistCooldown(id, until);
 }
 
@@ -152,9 +105,14 @@ async function runGithubTool(name: string, args: Record<string, unknown>, token:
     switch (name) {
       case "github_get_user": return await githubFetch(token, "/user");
       case "github_list_repos": return await githubFetch(token, "/user/repos?per_page=20&sort=updated");
-      case "github_create_repo": return await githubFetch(token, "/user/repos", "POST", {
-        name: args.name, description: args.description ?? "", private: args.private ?? false, auto_init: args.auto_init ?? true,
-      });
+      case "github_create_repo": {
+        const result = await githubFetch(token, "/user/repos", "POST", {
+          name: args.name, description: args.description ?? "", private: args.private ?? false, auto_init: args.auto_init ?? true,
+        }) as Record<string, unknown>;
+        // Автоматически сохраняем новое репо как текущий проект
+        if (result.full_name) await saveProjectRepo(String(result.full_name));
+        return result;
+      }
       case "github_get_repo": return await githubFetch(token, `/repos/${args.owner}/${args.repo}`);
       case "github_create_or_update_file": {
         const content = Buffer.from(String(args.content)).toString("base64");
@@ -348,7 +306,7 @@ async function runGithubTool(name: string, args: Record<string, unknown>, token:
   } catch (err) { return { error: String(err) }; }
 }
 
-function buildGeminiTools(hasGithub: boolean): Tool[] {
+function buildGeminiTools(hasGithub: boolean, isPm = false): Tool[] {
   const agentListStr = AGENTS.map(a => `${a.id} (${a.name})`).join(", ");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const allDeclarations: any[] = [
@@ -358,7 +316,8 @@ function buildGeminiTools(hasGithub: boolean): Tool[] {
     allDeclarations.push(
       { name: "github_get_user", description: "Get the authenticated GitHub user info", parameters: { type: "object", properties: {} } },
       { name: "github_list_repos", description: "List the user's GitHub repositories", parameters: { type: "object", properties: {} } },
-      { name: "github_create_repo", description: "Create a new GitHub repository", parameters: { type: "object", properties: { name: { type: "string" }, description: { type: "string" }, private: { type: "boolean" }, auto_init: { type: "boolean" } }, required: ["name"] } },
+      // Только Лена (pm) может создавать репозиторий
+      ...(isPm ? [{ name: "github_create_repo", description: "Создать новый GitHub репозиторий для проекта (только для Лены)", parameters: { type: "object", properties: { name: { type: "string" }, description: { type: "string" }, private: { type: "boolean" }, auto_init: { type: "boolean" } }, required: ["name"] } }] : []),
       { name: "github_get_repo", description: "Get info about a GitHub repository", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" } }, required: ["owner", "repo"] } },
       { name: "github_create_or_update_file", description: "Create or update a file in a GitHub repository", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, path: { type: "string" }, content: { type: "string" }, message: { type: "string" }, branch: { type: "string" } }, required: ["owner", "repo", "path", "content", "message"] } },
       { name: "github_create_branch", description: "Create a new branch", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, branch: { type: "string" } }, required: ["owner", "repo", "branch"] } },
@@ -394,58 +353,26 @@ function buildGeminiTools(hasGithub: boolean): Tool[] {
   return [{ functionDeclarations: allDeclarations }];
 }
 
-function buildGroqTools(hasGithub: boolean) {
-  return [
-    { type: "function" as const, function: { name: "consult_agent", description: "Ask a colleague agent a specific question", parameters: { type: "object", properties: { agentId: { type: "string", description: `Agent ID, one of: ${AGENTS.map(a=>a.id).join(", ")}` }, question: { type: "string" } }, required: ["agentId","question"] } } },
-    ...(hasGithub ? [
-      { type: "function" as const, function: { name: "github_get_user", description: "Get authenticated GitHub user", parameters: { type: "object", properties: {} } } },
-      { type: "function" as const, function: { name: "github_list_repos", description: "List user repos", parameters: { type: "object", properties: {} } } },
-      { type: "function" as const, function: { name: "github_create_repo", description: "Create a new repo", parameters: { type: "object", properties: { name: { type: "string" }, description: { type: "string" }, private: { type: "boolean" }, auto_init: { type: "boolean" } }, required: ["name"] } } },
-      { type: "function" as const, function: { name: "github_create_or_update_file", description: "Create or update file in repo", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, path: { type: "string" }, content: { type: "string" }, message: { type: "string" }, branch: { type: "string" } }, required: ["owner", "repo", "path", "content", "message"] } } },
-      { type: "function" as const, function: { name: "github_create_branch", description: "Create a branch", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, branch: { type: "string" } }, required: ["owner", "repo", "branch"] } } },
-      { type: "function" as const, function: { name: "github_list_files", description: "List files in repo", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, path: { type: "string" } }, required: ["owner", "repo"] } } },
-      { type: "function" as const, function: { name: "github_list_issues", description: "List open issues", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" } }, required: ["owner", "repo"] } } },
-      { type: "function" as const, function: { name: "github_create_issue", description: "Create an issue", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, title: { type: "string" }, body: { type: "string" } }, required: ["owner", "repo", "title"] } } },
-      { type: "function" as const, function: { name: "github_get_file", description: "Read file content", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, path: { type: "string" } }, required: ["owner", "repo", "path"] } } },
-      { type: "function" as const, function: { name: "github_delete_file", description: "Delete a file", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, path: { type: "string" }, message: { type: "string" } }, required: ["owner", "repo", "path"] } } },
-      { type: "function" as const, function: { name: "github_create_pull_request", description: "Create a pull request", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, title: { type: "string" }, body: { type: "string" }, head: { type: "string" }, base: { type: "string" } }, required: ["owner", "repo", "title", "head"] } } },
-      { type: "function" as const, function: { name: "github_list_pull_requests", description: "List pull requests", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, state: { type: "string" } }, required: ["owner", "repo"] } } },
-      { type: "function" as const, function: { name: "github_merge_pull_request", description: "Merge a pull request", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, pull_number: { type: "number" }, commit_title: { type: "string" }, merge_method: { type: "string" } }, required: ["owner", "repo", "pull_number"] } } },
-      { type: "function" as const, function: { name: "github_close_issue", description: "Close an issue", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, issue_number: { type: "number" } }, required: ["owner", "repo", "issue_number"] } } },
-      { type: "function" as const, function: { name: "github_add_comment", description: "Add comment to issue/PR", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, issue_number: { type: "number" }, body: { type: "string" } }, required: ["owner", "repo", "issue_number", "body"] } } },
-      { type: "function" as const, function: { name: "github_list_actions_runs", description: "List recent Actions runs", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" } }, required: ["owner", "repo"] } } },
-      { type: "function" as const, function: { name: "github_get_actions_run", description: "Get a specific Actions run", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, run_id: { type: "number" } }, required: ["owner", "repo", "run_id"] } } },
-      { type: "function" as const, function: { name: "github_list_actions_jobs", description: "List jobs/steps of an Actions run", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, run_id: { type: "number" } }, required: ["owner", "repo", "run_id"] } } },
-      { type: "function" as const, function: { name: "github_rerun_actions", description: "Re-run a failed Actions workflow", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, run_id: { type: "number" } }, required: ["owner", "repo", "run_id"] } } },
-      { type: "function" as const, function: { name: "github_list_secrets", description: "List Actions secrets names", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" } }, required: ["owner", "repo"] } } },
-      { type: "function" as const, function: { name: "github_repo_settings", description: "Get repo settings", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" } }, required: ["owner", "repo"] } } },
-      { type: "function" as const, function: { name: "vercel_deploy", description: "Trigger Vercel production deployment", parameters: { type: "object", properties: { project_name: { type: "string" }, branch: { type: "string" } } } } },
-      { type: "function" as const, function: { name: "vercel_list_deployments", description: "List recent Vercel deployments", parameters: { type: "object", properties: { project_id: { type: "string" } } } } },
-      { type: "function" as const, function: { name: "vercel_get_deployment", description: "Get Vercel deployment status", parameters: { type: "object", properties: { deployment_id: { type: "string" } }, required: ["deployment_id"] } } },
-      { type: "function" as const, function: { name: "vercel_list_projects", description: "List all Vercel projects", parameters: { type: "object", properties: {} } } },
-      { type: "function" as const, function: { name: "vercel_set_env", description: "Set env var on Vercel project", parameters: { type: "object", properties: { project_id: { type: "string" }, key: { type: "string" }, value: { type: "string" } }, required: ["project_id", "key", "value"] } } },
-      { type: "function" as const, function: { name: "supabase_query", description: "Query a Supabase table", parameters: { type: "object", properties: { table: { type: "string" }, select: { type: "string" }, filter_col: { type: "string" }, filter: { type: "string" }, limit: { type: "number" } }, required: ["table"] } } },
-      { type: "function" as const, function: { name: "supabase_insert", description: "Insert a row into Supabase", parameters: { type: "object", properties: { table: { type: "string" }, data: { type: "object" } }, required: ["table", "data"] } } },
-      { type: "function" as const, function: { name: "supabase_update", description: "Update rows in Supabase", parameters: { type: "object", properties: { table: { type: "string" }, filter_col: { type: "string" }, filter_val: { type: "string" }, data: { type: "object" } }, required: ["table", "filter_val", "data"] } } },
-      { type: "function" as const, function: { name: "railway_deploy", description: "Trigger Railway deployment", parameters: { type: "object", properties: { service_id: { type: "string" }, environment_id: { type: "string" } }, required: ["service_id", "environment_id"] } } },
-      { type: "function" as const, function: { name: "railway_graphql", description: "Run any Railway GraphQL query/mutation", parameters: { type: "object", properties: { query: { type: "string" }, variables: { type: "object" } }, required: ["query"] } } },
-      { type: "function" as const, function: { name: "http_request", description: "Make HTTP request to any external API", parameters: { type: "object", properties: { url: { type: "string" }, method: { type: "string" }, body: { type: "object" }, bearer_token: { type: "string" }, headers: { type: "object" } }, required: ["url"] } } },
-    ] : []),
-  ];
-}
-
-async function consultAgent(targetId: string, question: string, githubToken: string, depth: number): Promise<string> {
+async function consultAgent(targetId: string, question: string, githubToken: string, depth: number, groupChatId?: string, topicMap?: Record<string, number>): Promise<string> {
   if (depth >= 2) return "[максимальная глубина цепочки достигнута]";
   const target = AGENTS.find(a => a.id === targetId);
   if (!target) return `[агент не найден: ${targetId}. Доступные id: ${AGENTS.map(a=>a.id).join(", ")}]`;
   try {
-    const baseUrl = process.env.APP_URL || "https://prox-agents.vercel.app";
+    const baseUrl = process.env.APP_URL || "https://prox-three-taupe.vercel.app";
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 28_000);
+    const targetThreadId = topicMap?.[targetId];
     const res = await fetch(`${baseUrl}/api/agent`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: question, agentId: targetId, history: [], githubToken, _depth: depth + 1 }),
+      body: JSON.stringify({
+        message: question,
+        agentId: targetId,
+        history: [],
+        githubToken,
+        _depth: depth + 1,
+        ...(groupChatId && targetThreadId ? { _groupChatId: groupChatId, _threadId: targetThreadId } : {}),
+      }),
       signal: controller.signal,
     });
     clearTimeout(tid);
@@ -465,15 +392,13 @@ export async function GET() {
       available: (cooldowns.get(m.id) ?? 0) <= now,
       cooldownUntil: cooldowns.get(m.id) ? new Date(cooldowns.get(m.id)!).toISOString() : null,
     })),
-    groqConfigured: !!groq,
-    openrouterConfigured: !!process.env.OPENROUTER_API_KEY,
-    cerebrasConfigured: !!cerebrasKey,
+    geminiConfigured: !!process.env.GEMINI_API_KEY,
   });
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const { message, agentId, history, githubToken: clientToken, _depth = 0, _groupChatId, _threadId } = await req.json();
+    const { message, agentId, history, githubToken: clientToken, _depth = 0, _groupChatId, _threadId, _workerDispatch } = await req.json();
     if (!message || !agentId) return NextResponse.json({ error: "message and agentId required" }, { status: 400 });
     const agent = AGENTS.find((a) => a.id === agentId);
     if (!agent) return NextResponse.json({ error: "Unknown agent" }, { status: 400 });
@@ -482,14 +407,30 @@ export async function POST(req: NextRequest) {
     const hasGithub = !!githubToken;
 
     const agentList = AGENTS.map(a => `${a.id} — ${a.name} (${a.role})`).join("\n");
-    const sharedRepo = process.env.SHARED_GITHUB_REPO || "";
+    const currentProjectRepo = await loadProjectRepo();
+    const [repoOwner, repoName] = currentProjectRepo ? currentProjectRepo.split("/") : ["", ""];
     const githubInstruction = hasGithub
-      ? (sharedRepo
-        ? `\n\nGITHUB — ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА:\n1. Репозиторий: ${sharedRepo}. Никогда не создавай новые репо.\n2. Сразу вызывай github_create_or_update_file для КАЖДОГО файла.\n3. Пиши ТОЛЬКО реальный код (.ts/.tsx/.py/.css/конфиги). README не нужен.\n4. Минимум 2 файла с полным рабочим кодом, не заглушками.\n5. owner="${sharedRepo.split("/")[0]}", repo="${sharedRepo.split("/")[1]}"`
-        : "\n\nGITHUB — ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА:\n1. Репо указано в задаче (формат nikidav9/repo). Никогда не создавай новые репо.\n2. Сразу вызывай github_create_or_update_file для КАЖДОГО файла.\n3. Пиши ТОЛЬКО реальный код (.ts/.tsx/.py/.css/конфиги). README не нужен.\n4. Минимум 2 файла с полным рабочим кодом, не заглушками.")
+      ? (currentProjectRepo
+        ? `\n\n🗂 ТЕКУЩИЙ ПРОЕКТ — РЕПОЗИТОРИЙ: ${currentProjectRepo}\n` +
+          `ПРАВИЛА (СТРОГО):\n` +
+          `1. Работай ТОЛЬКО в репо ${currentProjectRepo}. owner="${repoOwner}", repo="${repoName}".\n` +
+          `2. НИКОГДА не создавай новые репозитории — ты не Лена.\n` +
+          `3. Сразу вызывай github_create_or_update_file для каждого файла.\n` +
+          `4. Пиши ТОЛЬКО реальный рабочий код. README не нужен.`
+        : agentId === "pm"
+          ? `\n\nGITHUB — ПРАВИЛА ДЛЯ ЛЕНЫ:\n` +
+            `1. Когда пользователь даёт новый проект — сначала создай репо через github_create_repo (выбери имя сама).\n` +
+            `2. После создания репо — сообщи команде имя репо в задачах [TASK:agentId:задание в репо owner/repo].\n` +
+            `3. Сама также работай в этом репо через github_create_or_update_file.`
+          : `\n\nGITHUB — ПРАВИЛА:\n1. Репо указано в задаче. Работай только в нём. НИКОГДА не создавай новые репозитории.\n2. Сразу вызывай github_create_or_update_file для каждого файла.`)
       : "";
     const selfDelegateWarning = agentId === "pm"
-      ? "\n\n⚠️ ЗАПРЕЩЕНО (АБСОЛЮТНО):\n- Никогда [TASK:pm:...] — ты не можешь ставить задачи самой себе\n- Никогда не пиши фразу 'Задачи поставлены: Lena'\n- Если нужна инфа — спроси пользователя напрямую: «Создатель, [вопрос]?»\n- Если знаешь что делать — делай сразу через инструменты (github_*, vercel_*, http_request)"
+      ? "\n\n⚠️ ЗАПРЕЩЕНО (АБСОЛЮТНО):\n- Никогда [TASK:pm:...] — ты не можешь ставить задачи самой себе\n- Никогда не пиши фразу 'Задачи поставлены: Lena'\n- Если нужна инфа — спроси пользователя напрямую: «Создатель, [вопрос]?»\n- Если знаешь что делать — делай сразу через инструменты (github_*, vercel_*, http_request)" +
+        "\n\n✅ АВТОПРОВЕРКА (ОБЯЗАТЕЛЬНО):\n" +
+        "Когда агент пишет 'Готово:' — СРАЗУ вызови github_list_files или github_get_file чтобы проверить что он реально сделал.\n" +
+        "Если файлы есть и код выглядит правильно — напиши 'Принято ✅' и дай следующее задание.\n" +
+        "Если чего-то не хватает или есть ошибки — дай агенту конкретные правки через [TASK:agentId:исправь ...].\n" +
+        "Не принимай работу без проверки — всегда смотри в репо."
       : "";
     // Tell all agents they already have GitHub/API access — no need to ask for tokens or collaborator access
     const accessInfo = hasGithub
@@ -504,14 +445,22 @@ export async function POST(req: NextRequest) {
       + accessInfo
       + githubInstruction;
 
+    // Load group topic map for sub-agent Telegram routing
+    let topicMap: Record<string, number> = {};
+    if (_groupChatId) {
+      const groupInfo = await getGroupInfo();
+      if (groupInfo?.topicMap) topicMap = groupInfo.topicMap;
+    }
+
     const stored: ChatMsg[] = await loadHistory(agentId);
     const fullHistory: ChatMsg[] = stored.length > 0 ? stored : (history || []);
     const compressedHistory = await compressHistory(fullHistory);
-    // Acquire lock BEFORE saving userMsg — prevents Railway worker from
-    // seeing a "user" last-message and re-dispatching while we're running
-    const lockAcquired = await acquireDispatchLock(agentId);
-    if (!lockAcquired) {
-      return NextResponse.json({ error: "Агент занят, попробуйте через несколько секунд" }, { status: 409 });
+    // Worker already holds its own in-memory lock (inFlight set), skip Supabase lock check
+    if (!_workerDispatch) {
+      const lockAcquired = await acquireDispatchLock(agentId);
+      if (!lockAcquired) {
+        return NextResponse.json({ error: "Агент занят, попробуйте через несколько секунд" }, { status: 409 });
+      }
     }
 
     // Dedup: don't append if last stored message is identical user message
@@ -521,12 +470,14 @@ export async function POST(req: NextRequest) {
     const historyWithUser = isDup ? compressedHistory : [...compressedHistory, userMsg];
     await saveHistory(agentId, historyWithUser);
 
+    // Resolve group chat context early so it's available for sub-agent routing
+    const tgGroupChatId = _groupChatId || historyWithUser.filter(m => m.role === "user").at(-1)?._groupChatId;
+    const tgThreadId = _threadId || historyWithUser.filter(m => m.role === "user").at(-1)?._threadId;
+
     // Append Russian language reminder to every user message sent to the model
     const messageForModel = message + "\n\n[ВАЖНО: отвечай ТОЛЬКО на русском языке]";
 
     const trimmedHistory = compressedHistory.filter(m => m.role === "user" || m.role === "model");
-    const groqHistory = compressedHistory.filter(m => m.role === "user" || m.role === "model")
-      .map(m => ({ role: (m.role === "model" ? "assistant" : "user") as "user" | "assistant", content: m.text }));
 
     let text = "";
     const githubActions: string[] = [];
@@ -541,50 +492,15 @@ export async function POST(req: NextRequest) {
       ]);
     }
 
-    // Build shared message format for OR/Groq/Cerebras
-    const chatMessages = [
-      { role: "system", content: systemInstruction },
-      ...groqHistory,
-      { role: "user", content: messageForModel },
-    ];
-    const chatTools = buildGroqTools(hasGithub);
-
-    // Helper: call any OpenAI-compatible endpoint
-    async function callOpenAICompat(
-      url: string, authHeader: string, entry: ModelEntry,
-      messages: object[], tools: object[], timeoutMs: number, extraHeaders?: Record<string,string>
-    ) {
-      const controller = new AbortController();
-      const tid = setTimeout(() => controller.abort(), timeoutMs);
-      try {
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "Authorization": authHeader, "Content-Type": "application/json", ...extraHeaders },
-          body: JSON.stringify({ model: entry.model, messages, max_tokens: 400, tools, tool_choice: "auto" }),
-          signal: controller.signal,
-        });
-        clearTimeout(tid);
-        const data = await res.json() as { choices?: { message: { content: string | null; tool_calls?: { id: string; function: { name: string; arguments: string } }[] } }[]; error?: { message: string } };
-        if (data.error) throw new Error(data.error.message);
-        const msg = data.choices?.[0]?.message;
-        if (!msg?.content && !msg?.tool_calls?.length) throw new Error("Empty response");
-        return { msg, entry };
-      } finally { clearTimeout(tid); }
-    }
-
-    // Single ordered pool: Gemini → Groq → Cerebras → OpenRouter
-    // Gemini + Groq first: best Russian language compliance
-    // Cerebras + OpenRouter: fast fallback with 20+ models
     await ensureCooldownsLoaded();
-    const PROVIDER_ORDER = ["gemini", "groq", "cerebras", "openrouter"];
-    const orderedPool = PROVIDER_ORDER.flatMap(p => availableModels().filter(e => e.provider === p));
+    const orderedPool = availableModels();
     for (const entry of orderedPool) {
-      const modelTimeout = entry.provider === "gemini" ? 8_000 : 5_000;
+      const modelTimeout = 25_000;
       try {
         if (entry.provider === "gemini") {
           const gModel = genAI.getGenerativeModel({
             model: entry.model, systemInstruction,
-            tools: buildGeminiTools(hasGithub),
+            tools: buildGeminiTools(hasGithub, agentId === "pm"),
           });
           const chat = gModel.startChat({
             history: trimmedHistory.map(msg => ({ role: msg.role, parts: [{ text: msg.text }] })),
@@ -604,7 +520,7 @@ export async function POST(req: NextRequest) {
               let toolResult: object;
               if (fc.name === "consult_agent") {
                 const args = fc.args as Record<string,unknown>;
-                const reply = await consultAgent(String(args.agentId), String(args.question), githubToken, _depth);
+                const reply = await consultAgent(String(args.agentId), String(args.question), githubToken, _depth, tgGroupChatId ? String(tgGroupChatId) : undefined, topicMap);
                 toolResult = { reply };
                 githubActions.push(`👥 ${args.agentId}: ${reply.slice(0, 120)}`);
               } else {
@@ -619,83 +535,6 @@ export async function POST(req: NextRequest) {
             );
           }
           text = stripThinking(result.response.text());
-          if (isEnglishResponse(text)) console.log(`[lang] ${entry.id} responded in English`);
-          usedProvider = entry.id;
-          break;
-
-        } else if (entry.provider === "groq" && groq) {
-          const groqMessages: Groq.Chat.ChatCompletionMessageParam[] = [
-            { role: "system", content: systemInstruction },
-            ...groqHistory,
-            { role: "user", content: messageForModel },
-          ];
-          const groqTools = buildGroqTools(hasGithub);
-
-          for (let round = 0; round < 6; round++) {
-            const groqRes = await withTimeout(groq.chat.completions.create({
-              model: entry.model, messages: groqMessages,
-              max_tokens: 600, tools: groqTools, tool_choice: "auto",
-            }), modelTimeout);
-            const choice = groqRes.choices[0];
-            const msg = choice.message;
-            groqMessages.push(msg as Groq.Chat.ChatCompletionMessageParam);
-            if (!msg.tool_calls || msg.tool_calls.length === 0) {
-              text = stripThinking(msg.content || "Нет ответа");
-              break;
-            }
-            for (const tc of msg.tool_calls) {
-              const args = JSON.parse(tc.function.arguments || "{}");
-              let toolResult: object;
-              if (tc.function.name === "consult_agent") {
-                const reply = await consultAgent(String(args.agentId), String(args.question), githubToken, _depth);
-                toolResult = { reply };
-                githubActions.push(`👥 ${args.agentId}: ${reply.slice(0, 120)}`);
-              } else {
-                toolResult = await runGithubTool(tc.function.name, args, githubToken);
-                githubActions.push(`${tc.function.name}: ${JSON.stringify(toolResult).slice(0, 150)}`);
-              }
-              groqMessages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(toolResult) });
-            }
-          }
-          if (isEnglishResponse(text)) console.log(`[lang] ${entry.id} responded in English`);
-          usedProvider = entry.id;
-          break;
-        } else if (entry.provider === "cerebras" || entry.provider === "openrouter") {
-          const url = entry.provider === "cerebras"
-            ? "https://api.cerebras.ai/v1/chat/completions"
-            : "https://openrouter.ai/api/v1/chat/completions";
-          const auth = entry.provider === "cerebras"
-            ? `Bearer ${cerebrasKey}`
-            : `Bearer ${process.env.OPENROUTER_API_KEY}`;
-          const extra: Record<string,string> = entry.provider === "openrouter"
-            ? { "HTTP-Referer": "https://prox-agents.vercel.app", "X-Title": "Dev Office" } : {};
-          if (!auth || auth === "Bearer ") continue;
-          const r = await callOpenAICompat(url, auth, entry, chatMessages, chatTools, 15_000, extra);
-          let curMessages = [...chatMessages];
-          let curMsg = r.msg;
-          for (let round = 0; round < 5 && curMsg.tool_calls?.length; round++) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            curMessages.push({ role: "assistant", content: curMsg.content ?? "", ...(curMsg.tool_calls ? { tool_calls: curMsg.tool_calls } : {}) } as any);
-            for (const tc of curMsg.tool_calls) {
-              const args = JSON.parse(tc.function.arguments || "{}");
-              let toolResult: object;
-              if (tc.function.name === "consult_agent") {
-                const reply = await consultAgent(String(args.agentId), String(args.question), githubToken, _depth);
-                toolResult = { reply };
-                githubActions.push(`👥 ${args.agentId}: ${reply.slice(0, 120)}`);
-              } else {
-                toolResult = await runGithubTool(tc.function.name, args, githubToken);
-                githubActions.push(`${tc.function.name}: ${JSON.stringify(toolResult).slice(0, 150)}`);
-              }
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              curMessages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(toolResult), name: tc.function.name } as any);
-            }
-            try {
-              const r2 = await callOpenAICompat(url, auth, entry, curMessages, chatTools, 15_000, extra);
-              curMsg = r2.msg;
-            } catch { break; }
-          }
-          text = stripThinking(curMsg.content || "");
           if (isEnglishResponse(text)) console.log(`[lang] ${entry.id} responded in English`);
           usedProvider = entry.id;
           break;
@@ -752,12 +591,23 @@ export async function POST(req: NextRequest) {
         const taskWithCallback = agentId !== "pm" && tId !== "pm"
           ? question
           : question;
-        // If PM assigned this task, tell the target agent to report back
+        // Если есть активное репо — явно указываем его агенту
+        const repoNote = currentProjectRepo
+          ? `\n\n🗂 Работай в репо: ${currentProjectRepo} (owner="${repoOwner}", repo="${repoName}")`
+          : "";
+        // Если pm даёт задачу — просим агента сообщить о завершении
         const finalTask = agentId === "pm"
-          ? `${question}\n\nКогда выполнишь — добавь [TASK:pm:Готово: краткий итог что сделал]`
-          : question;
+          ? `${question}${repoNote}\n\nКогда выполнишь — добавь [TASK:pm:Готово: краткий итог что сделал]`
+          : question + repoNote;
         const existing = await loadHistory(tId);
-        await saveHistory(tId, [...existing, { role: "user", text: finalTask }]);
+        const targetThread = tgGroupChatId ? topicMap[tId] : undefined;
+        const taskMsg: ChatMsg = {
+          role: "user",
+          text: finalTask,
+          ts: Date.now(),
+          ...(tgGroupChatId && targetThread ? { _groupChatId: String(tgGroupChatId), _threadId: targetThread } : {}),
+        };
+        await saveHistory(tId, [...existing, taskMsg]);
         githubActions.push(`👥 ${tId}: ${taskWithCallback.slice(0, 100)}`);
       }));
       text = text
@@ -791,11 +641,6 @@ export async function POST(req: NextRequest) {
     const botMsg: ChatMsg = { role: "model", text, ts: Date.now(), ...(githubActions.length ? { githubActions } : {}) };
     await saveHistory(agentId, [...historyWithUser, botMsg]);
     await releaseDispatchLock(agentId);
-
-    // Send agent responses to Telegram
-    // Resolve group context: from request params OR from last user message metadata
-    const tgGroupChatId = _groupChatId || historyWithUser.filter(m => m.role === "user").at(-1)?._groupChatId;
-    const tgThreadId = _threadId || historyWithUser.filter(m => m.role === "user").at(-1)?._threadId;
 
     // Case 1: message came from a group topic → reply in same topic
     if (tgGroupChatId && tgThreadId) {

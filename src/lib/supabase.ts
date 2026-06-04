@@ -53,9 +53,6 @@ export async function acquireDispatchLock(agentId: string): Promise<boolean> {
   if (!sb) return true; // no supabase = allow (dev mode)
   const lockId = `_lock_${agentId}`;
   try {
-    const { data } = await sb.from("chat_histories").select("messages").eq("agent_id", lockId).single();
-    const existing = (data?.messages as {ts?: number}[] | null)?.[0];
-    if (existing?.ts && existing.ts > Date.now()) return false; // locked
     await sb.from("chat_histories").upsert(
       { agent_id: lockId, messages: [{ role: "system", text: "lock", ts: Date.now() + LOCK_TTL }], updated_at: new Date().toISOString() },
       { onConflict: "agent_id" }
@@ -91,6 +88,26 @@ export async function saveCooldowns(data: Record<string, number>): Promise<void>
   try {
     await sb.from("chat_histories").upsert(
       { agent_id: "_cooldowns", messages: data as unknown as ChatMsg[], updated_at: new Date().toISOString() },
+      { onConflict: "agent_id" }
+    );
+  } catch {}
+}
+
+export async function loadProjectRepo(): Promise<string> {
+  const sb = getClient();
+  if (!sb) return process.env.SHARED_GITHUB_REPO || "";
+  try {
+    const { data } = await sb.from("chat_histories").select("messages").eq("agent_id", "_project_repo").single();
+    return (data?.messages as unknown as { repo: string })?.repo || process.env.SHARED_GITHUB_REPO || "";
+  } catch { return process.env.SHARED_GITHUB_REPO || ""; }
+}
+
+export async function saveProjectRepo(repo: string): Promise<void> {
+  const sb = getClient();
+  if (!sb) return;
+  try {
+    await sb.from("chat_histories").upsert(
+      { agent_id: "_project_repo", messages: { repo } as unknown as ChatMsg[], updated_at: new Date().toISOString() },
       { onConflict: "agent_id" }
     );
   } catch {}
