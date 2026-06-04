@@ -51,6 +51,35 @@ export async function POST(req: NextRequest) {
 
     // ── GROUP MESSAGE with topic thread ──────────────────────────────────
     if ((chatType === "supergroup" || chatType === "group") && threadId) {
+
+      // /setup agentId — регистрирует текущую тему для агента
+      if (text.startsWith("/setup ") || text.startsWith("/setup@")) {
+        const parts = text.split(/\s+/);
+        const targetAgentId = parts[1]?.replace(/@.*/, "").trim();
+        if (targetAgentId) {
+          const existing = await getGroupConfig() ?? { groupId: chatId, topicMap: {} };
+          existing.groupId = chatId;
+          existing.topicMap[targetAgentId] = threadId;
+          await saveHistory("_tg_group_config", [{ role: "system", text: JSON.stringify(existing) }]);
+          groupConfigCache = existing;
+          groupConfigLoadedAt = Date.now();
+          await sendTelegram(chatId, `✅ Тема зарегистрирована для агента: ${targetAgentId}`, threadId);
+        }
+        return NextResponse.json({ ok: true });
+      }
+
+      // /setuplist — показать текущую конфигурацию
+      if (text.startsWith("/setuplist")) {
+        const config = await getGroupConfig();
+        if (!config) {
+          await sendTelegram(chatId, "❌ Конфигурация не настроена. Используй /setup agentId в каждой теме.", threadId);
+        } else {
+          const map = Object.entries(config.topicMap).map(([id, tid]) => `• ${id} → тема ${tid}`).join("\n");
+          await sendTelegram(chatId, `📋 Конфигурация:\nГруппа: ${config.groupId}\n${map}`, threadId);
+        }
+        return NextResponse.json({ ok: true });
+      }
+
       const config = await getGroupConfig();
       if (!config) return NextResponse.json({ ok: true });
 
