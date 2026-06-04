@@ -54,7 +54,10 @@ const CODE_BLOCK = `
 - НЕ пиши Express Router в Next.js проекте (import Router from 'express', router.get/post). В Next.js только src/app/api/*/route.ts с export async function GET/POST
 - НЕ добавляй src/pages/ или pages/ в проект с src/app/ — это сломает Next.js
 - НЕ импортируй пакеты которых нет в package.json — проверь список зависимостей перед импортом
-- НЕ создавай дублирующие конфиги (next.config.js + next.config.ts вместе — оставь только .ts)
+- НЕ создавай дублирующие конфиги (next.config.js + next.config.ts вместе — оставь только один)
+- next.config.ts поддерживается ТОЛЬКО в Next.js 15+. В Next.js 14 используй next.config.js с module.exports
+- ВСЕГДА добавляй autoprefixer в devDependencies если используешь postcss.config.js с autoprefixer
+- tsconfig.json ОБЯЗАТЕЛЕН — без него алиас @/* не работает и все импорты через @/ упадут с Module not found
 - НЕ создавай мобильные папки (mobile/, android/, ios/) в Next.js проекте без явной инструкции
 - НЕ создавай blockchain папки без явной инструкции
 - НЕ пиши тесты Playwright/Cypress если нет @playwright/test или cypress в package.json
