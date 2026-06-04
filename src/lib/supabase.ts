@@ -93,6 +93,26 @@ export async function saveCooldowns(data: Record<string, number>): Promise<void>
   } catch {}
 }
 
+export async function loadProjectRepo(): Promise<string> {
+  const sb = getClient();
+  if (!sb) return process.env.SHARED_GITHUB_REPO || "";
+  try {
+    const { data } = await sb.from("chat_histories").select("messages").eq("agent_id", "_project_repo").single();
+    return (data?.messages as unknown as { repo: string })?.repo || process.env.SHARED_GITHUB_REPO || "";
+  } catch { return process.env.SHARED_GITHUB_REPO || ""; }
+}
+
+export async function saveProjectRepo(repo: string): Promise<void> {
+  const sb = getClient();
+  if (!sb) return;
+  try {
+    await sb.from("chat_histories").upsert(
+      { agent_id: "_project_repo", messages: { repo } as unknown as ChatMsg[], updated_at: new Date().toISOString() },
+      { onConflict: "agent_id" }
+    );
+  } catch {}
+}
+
 export async function clearHistory(agentId: string): Promise<void> {
   const sb = getClient();
   if (!sb) return;

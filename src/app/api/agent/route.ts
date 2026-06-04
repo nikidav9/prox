@@ -1,7 +1,7 @@
 import { GoogleGenerativeAI, Tool, SchemaType } from "@google/generative-ai";
 import { NextRequest, NextResponse } from "next/server";
 import { AGENTS } from "@/lib/agents";
-import { loadHistory, saveHistory, acquireDispatchLock, releaseDispatchLock, ChatMsg, loadCooldowns, saveCooldowns } from "@/lib/supabase";
+import { loadHistory, saveHistory, acquireDispatchLock, releaseDispatchLock, ChatMsg, loadCooldowns, saveCooldowns, loadProjectRepo, saveProjectRepo } from "@/lib/supabase";
 import { sendTelegram, getTelegramChatId, getGroupInfo } from "@/app/api/telegram/route";
 
 export const maxDuration = 60;
@@ -105,9 +105,14 @@ async function runGithubTool(name: string, args: Record<string, unknown>, token:
     switch (name) {
       case "github_get_user": return await githubFetch(token, "/user");
       case "github_list_repos": return await githubFetch(token, "/user/repos?per_page=20&sort=updated");
-      case "github_create_repo": return await githubFetch(token, "/user/repos", "POST", {
-        name: args.name, description: args.description ?? "", private: args.private ?? false, auto_init: args.auto_init ?? true,
-      });
+      case "github_create_repo": {
+        const result = await githubFetch(token, "/user/repos", "POST", {
+          name: args.name, description: args.description ?? "", private: args.private ?? false, auto_init: args.auto_init ?? true,
+        }) as Record<string, unknown>;
+        // Автоматически сохраняем новое репо как текущий проект
+        if (result.full_name) await saveProjectRepo(String(result.full_name));
+        return result;
+      }
       case "github_get_repo": return await githubFetch(token, `/repos/${args.owner}/${args.repo}`);
       case "github_create_or_update_file": {
         const content = Buffer.from(String(args.content)).toString("base64");
@@ -301,7 +306,7 @@ async function runGithubTool(name: string, args: Record<string, unknown>, token:
   } catch (err) { return { error: String(err) }; }
 }
 
-function buildGeminiTools(hasGithub: boolean): Tool[] {
+function buildGeminiTools(hasGithub: boolean, isPm = false): Tool[] {
   const agentListStr = AGENTS.map(a => `${a.id} (${a.name})`).join(", ");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const allDeclarations: any[] = [
@@ -311,7 +316,8 @@ function buildGeminiTools(hasGithub: boolean): Tool[] {
     allDeclarations.push(
       { name: "github_get_user", description: "Get the authenticated GitHub user info", parameters: { type: "object", properties: {} } },
       { name: "github_list_repos", description: "List the user's GitHub repositories", parameters: { type: "object", properties: {} } },
-      { name: "github_create_repo", description: "Create a new GitHub repository", parameters: { type: "object", properties: { name: { type: "string" }, description: { type: "string" }, private: { type: "boolean" }, auto_init: { type: "boolean" } }, required: ["name"] } },
+      // Только Лена (pm) может создавать репозиторий
+      ...(isPm ? [{ name: "github_create_repo", description: "Создать новый GitHub репозиторий для проекта (только для Лены)", parameters: { type: "object", properties: { name: { type: "string" }, description: { type: "string" }, private: { type: "boolean" }, auto_init: { type: "boolean" } }, required: ["name"] } }] : []),
       { name: "github_get_repo", description: "Get info about a GitHub repository", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" } }, required: ["owner", "repo"] } },
       { name: "github_create_or_update_file", description: "Create or update a file in a GitHub repository", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, path: { type: "string" }, content: { type: "string" }, message: { type: "string" }, branch: { type: "string" } }, required: ["owner", "repo", "path", "content", "message"] } },
       { name: "github_create_branch", description: "Create a new branch", parameters: { type: "object", properties: { owner: { type: "string" }, repo: { type: "string" }, branch: { type: "string" } }, required: ["owner", "repo", "branch"] } },
@@ -401,14 +407,30 @@ export async function POST(req: NextRequest) {
     const hasGithub = !!githubToken;
 
     const agentList = AGENTS.map(a => `${a.id} — ${a.name} (${a.role})`).join("\n");
-    const sharedRepo = process.env.SHARED_GITHUB_REPO || "";
+    const currentProjectRepo = await loadProjectRepo();
+    const [repoOwner, repoName] = currentProjectRepo ? currentProjectRepo.split("/") : ["", ""];
     const githubInstruction = hasGithub
-      ? (sharedRepo
-        ? `\n\nGITHUB — ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА:\n1. Репозиторий: ${sharedRepo}. Никогда не создавай новые репо.\n2. Сразу вызывай github_create_or_update_file для КАЖДОГО файла.\n3. Пиши ТОЛЬКО реальный код (.ts/.tsx/.py/.css/конфиги). README не нужен.\n4. Минимум 2 файла с полным рабочим кодом, не заглушками.\n5. owner="${sharedRepo.split("/")[0]}", repo="${sharedRepo.split("/")[1]}"`
-        : "\n\nGITHUB — ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА:\n1. Репо указано в задаче (формат nikidav9/repo). Никогда не создавай новые репо.\n2. Сразу вызывай github_create_or_update_file для КАЖДОГО файла.\n3. Пиши ТОЛЬКО реальный код (.ts/.tsx/.py/.css/конфиги). README не нужен.\n4. Минимум 2 файла с полным рабочим кодом, не заглушками.")
+      ? (currentProjectRepo
+        ? `\n\n🗂 ТЕКУЩИЙ ПРОЕКТ — РЕПОЗИТОРИЙ: ${currentProjectRepo}\n` +
+          `ПРАВИЛА (СТРОГО):\n` +
+          `1. Работай ТОЛЬКО в репо ${currentProjectRepo}. owner="${repoOwner}", repo="${repoName}".\n` +
+          `2. НИКОГДА не создавай новые репозитории — ты не Лена.\n` +
+          `3. Сразу вызывай github_create_or_update_file для каждого файла.\n` +
+          `4. Пиши ТОЛЬКО реальный рабочий код. README не нужен.`
+        : agentId === "pm"
+          ? `\n\nGITHUB — ПРАВИЛА ДЛЯ ЛЕНЫ:\n` +
+            `1. Когда пользователь даёт новый проект — сначала создай репо через github_create_repo (выбери имя сама).\n` +
+            `2. После создания репо — сообщи команде имя репо в задачах [TASK:agentId:задание в репо owner/repo].\n` +
+            `3. Сама также работай в этом репо через github_create_or_update_file.`
+          : `\n\nGITHUB — ПРАВИЛА:\n1. Репо указано в задаче. Работай только в нём. НИКОГДА не создавай новые репозитории.\n2. Сразу вызывай github_create_or_update_file для каждого файла.`)
       : "";
     const selfDelegateWarning = agentId === "pm"
-      ? "\n\n⚠️ ЗАПРЕЩЕНО (АБСОЛЮТНО):\n- Никогда [TASK:pm:...] — ты не можешь ставить задачи самой себе\n- Никогда не пиши фразу 'Задачи поставлены: Lena'\n- Если нужна инфа — спроси пользователя напрямую: «Создатель, [вопрос]?»\n- Если знаешь что делать — делай сразу через инструменты (github_*, vercel_*, http_request)"
+      ? "\n\n⚠️ ЗАПРЕЩЕНО (АБСОЛЮТНО):\n- Никогда [TASK:pm:...] — ты не можешь ставить задачи самой себе\n- Никогда не пиши фразу 'Задачи поставлены: Lena'\n- Если нужна инфа — спроси пользователя напрямую: «Создатель, [вопрос]?»\n- Если знаешь что делать — делай сразу через инструменты (github_*, vercel_*, http_request)" +
+        "\n\n✅ АВТОПРОВЕРКА (ОБЯЗАТЕЛЬНО):\n" +
+        "Когда агент пишет 'Готово:' — СРАЗУ вызови github_list_files или github_get_file чтобы проверить что он реально сделал.\n" +
+        "Если файлы есть и код выглядит правильно — напиши 'Принято ✅' и дай следующее задание.\n" +
+        "Если чего-то не хватает или есть ошибки — дай агенту конкретные правки через [TASK:agentId:исправь ...].\n" +
+        "Не принимай работу без проверки — всегда смотри в репо."
       : "";
     // Tell all agents they already have GitHub/API access — no need to ask for tokens or collaborator access
     const accessInfo = hasGithub
@@ -478,7 +500,7 @@ export async function POST(req: NextRequest) {
         if (entry.provider === "gemini") {
           const gModel = genAI.getGenerativeModel({
             model: entry.model, systemInstruction,
-            tools: buildGeminiTools(hasGithub),
+            tools: buildGeminiTools(hasGithub, agentId === "pm"),
           });
           const chat = gModel.startChat({
             history: trimmedHistory.map(msg => ({ role: msg.role, parts: [{ text: msg.text }] })),
@@ -569,10 +591,14 @@ export async function POST(req: NextRequest) {
         const taskWithCallback = agentId !== "pm" && tId !== "pm"
           ? question
           : question;
-        // If PM assigned this task, tell the target agent to report back
+        // Если есть активное репо — явно указываем его агенту
+        const repoNote = currentProjectRepo
+          ? `\n\n🗂 Работай в репо: ${currentProjectRepo} (owner="${repoOwner}", repo="${repoName}")`
+          : "";
+        // Если pm даёт задачу — просим агента сообщить о завершении
         const finalTask = agentId === "pm"
-          ? `${question}\n\nКогда выполнишь — добавь [TASK:pm:Готово: краткий итог что сделал]`
-          : question;
+          ? `${question}${repoNote}\n\nКогда выполнишь — добавь [TASK:pm:Готово: краткий итог что сделал]`
+          : question + repoNote;
         const existing = await loadHistory(tId);
         const targetThread = tgGroupChatId ? topicMap[tId] : undefined;
         const taskMsg: ChatMsg = {
