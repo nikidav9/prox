@@ -499,6 +499,23 @@ export async function POST(req: NextRequest) {
       || historyWithUser.filter(m => m.role === "user").at(-1)?._threadId
       || topicMap[agentId];
 
+    // Показываем "печатает..." в теме агента пока он думает
+    const tgBotToken = process.env.TELEGRAM_BOT_TOKEN || "";
+    if (tgBotToken && tgGroupChatId && tgThreadId) {
+      const sendTyping = () => fetch(`https://api.telegram.org/bot${tgBotToken}/sendChatAction`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: String(tgGroupChatId), action: "typing", message_thread_id: Number(tgThreadId) }),
+      }).catch(() => {});
+      sendTyping();
+      // Повторяем каждые 4 сек пока агент работает (typing длится 5 сек в Telegram)
+      const typingInterval = setInterval(sendTyping, 4000);
+      // Остановим через 55 сек (макс время обработки)
+      setTimeout(() => clearInterval(typingInterval), 55_000);
+      // Сохраняем чтобы остановить после ответа
+      (globalThis as Record<string, unknown>)[`_typing_${agentId}`] = typingInterval;
+    }
+
     // Append Russian language reminder to every user message sent to the model
     const messageForModel = message + "\n\n[ВАЖНО: отвечай ТОЛЬКО на русском языке]";
 
@@ -675,6 +692,10 @@ export async function POST(req: NextRequest) {
       text = selfDelegations.join("\n");
     }
     if (!text) text = "Готово.";
+
+    // Останавливаем "печатает..."
+    const typingTimer = (globalThis as Record<string, unknown>)[`_typing_${agentId}`] as ReturnType<typeof setInterval> | undefined;
+    if (typingTimer) { clearInterval(typingTimer); delete (globalThis as Record<string, unknown>)[`_typing_${agentId}`]; }
 
     const botMsg: ChatMsg = { role: "model", text, ts: Date.now(), ...(githubActions.length ? { githubActions } : {}) };
     await saveHistory(agentId, [...historyWithUser, botMsg]);
