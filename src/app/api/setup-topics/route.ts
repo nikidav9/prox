@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { AGENTS } from "@/lib/agents";
 import { saveHistory, loadHistory } from "@/lib/supabase";
@@ -11,6 +11,13 @@ async function tgSend(chatId: string, text: string, threadId: number) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ chat_id: chatId, text, message_thread_id: threadId }),
   }).then(r => r.json());
+}
+
+export async function POST(req: NextRequest) {
+  const { groupId, topicMap } = await req.json();
+  if (!groupId || !topicMap) return NextResponse.json({ error: "groupId and topicMap required" }, { status: 400 });
+  await saveHistory("_tg_group_config", [{ role: "system", text: JSON.stringify({ groupId, topicMap }) }]);
+  return NextResponse.json({ ok: true, groupId, topicMap });
 }
 
 export async function GET() {
