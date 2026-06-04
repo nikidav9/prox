@@ -81,7 +81,17 @@ export async function POST(req: NextRequest) {
       }
 
       const config = await getGroupConfig();
-      if (!config) return NextResponse.json({ ok: true });
+
+      // Если конфиг ещё не настроен — всё равно сохраняем сообщение в _tg_pending
+      // чтобы /api/setup-topics мог найти groupChatId и threadId
+      if (!config) {
+        const pending = await loadHistory("_tg_pending");
+        const key = `${chatId}_${threadId}`;
+        if (!pending.find(m => m.text === key)) {
+          await saveHistory("_tg_pending", [...pending, { role: "system", text: key, _groupChatId: chatId, _threadId: threadId }]);
+        }
+        return NextResponse.json({ ok: true });
+      }
 
       const agentId = Object.entries(config.topicMap).find(([, tid]) => tid === threadId)?.[0];
       if (!agentId || text.startsWith("/")) return NextResponse.json({ ok: true });
