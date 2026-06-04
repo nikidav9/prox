@@ -12,8 +12,9 @@ type Provider = "gemini";
 interface ModelEntry { id: string; provider: Provider; model: string }
 
 const MODEL_POOL: ModelEntry[] = [
-  { id: "gemini-2.5-flash", provider: "gemini", model: "gemini-2.5-flash-preview-05-20" },
-  { id: "gemini-2.0-flash", provider: "gemini", model: "gemini-2.0-flash-001" },
+  { id: "gemini-2.5-flash",      provider: "gemini", model: "gemini-2.5-flash" },
+  { id: "gemini-2.5-flash-lite", provider: "gemini", model: "gemini-2.5-flash-lite" },
+  { id: "gemini-flash-latest",   provider: "gemini", model: "gemini-flash-latest" },
 ];
 
 const cooldowns = new Map<string, number>();
