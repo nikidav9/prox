@@ -647,7 +647,7 @@ export async function POST(req: NextRequest) {
       if (text && text !== "Готово.") {
         await sendTelegram(String(tgGroupChatId), text, Number(tgThreadId));
       }
-    } else {
+    } else if (!_workerDispatch) {
       // Case 2: web UI request → mirror to Telegram group topic for this agent
       const groupInfo = await getGroupInfo();
       if (groupInfo) {
