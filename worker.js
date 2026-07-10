@@ -1,10 +1,10 @@
 /**
  * Cloudflare Worker — VLESS relay via Railway backend
- * /vless → WebSocket bridge → Railway Xray → internet
+ * /vless → WebSocket bridge → Xray → internet
  */
 
-const RAILWAY_HOST = 'prox-production-e4e0.up.railway.app';
-const RAILWAY_WS   = `wss://${RAILWAY_HOST}/vless`;
+const BACKEND_HOST = 'prox-production-e818.up.railway.app';
+const BACKEND_WS   = `wss://${BACKEND_HOST}/vless`;
 
 export default {
   async fetch(request, env) {
@@ -23,7 +23,7 @@ async function handleRequest(request, env) {
   const url  = new URL(request.url);
   const host = request.headers.get('host') || url.host;
 
-  // ── VLESS relay via Railway ───────────────────────────────────────────────
+  // ── VLESS relay ───────────────────────────────────────────────────────────
   if (url.pathname === '/vless') {
     if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
       return new Response('WebSocket required', { status: 400 });
@@ -89,9 +89,7 @@ async function handleRequest(request, env) {
   return new Response('Not Found', { status: 404 });
 }
 
-// ── VLESS WebSocket relay ────────────────────────────────────────────────────
-// Bridges client ↔ backend via two WebSocket connections.
-// Queues client messages until upstream opens to avoid drops.
+// ── VLESS WebSocket relay ───────────────────────────────────────────────────
 
 async function handleVlessRelay(request) {
   const { 0: client, 1: server } = new WebSocketPair();
@@ -99,7 +97,7 @@ async function handleVlessRelay(request) {
 
   let upstream;
   try {
-    upstream = new WebSocket(RAILWAY_WS);
+    upstream = new WebSocket(BACKEND_WS);
   } catch (e) {
     server.close(1011, 'upstream init failed');
     return new Response(null, { status: 101, webSocket: client });
@@ -226,8 +224,8 @@ function makeUI(host, user, pass, vlessUuid) {
   const vlessCF = vlessUuid
     ? `vless://${vlessUuid}@${host}:443?encryption=none&security=tls&type=ws&path=%2Fvless&host=${host}#prox-cf`
     : '';
-  const vlessRailway = vlessUuid
-    ? `vless://${vlessUuid}@${RAILWAY_HOST}:443?encryption=none&security=tls&type=ws&path=%2Fvless&host=${RAILWAY_HOST}#prox-railway`
+  const vlessBackend = vlessUuid
+    ? `vless://${vlessUuid}@${BACKEND_HOST}:443?encryption=none&security=tls&type=ws&path=%2Fvless&host=${BACKEND_HOST}#prox-direct`
     : '';
 
   return `<!DOCTYPE html>
@@ -283,12 +281,12 @@ ${vlessCF ? `
   <p class="note">Трафик: телефон → Cloudflare Edge → сервер → интернет. Без лимитов.</p>
 </div>` : `<div class="c"><p style="color:#8e8e93">Загрузка...</p></div>`}
 
-${vlessRailway ? `
+${vlessBackend ? `
 <div class="c">
-  <h2>Резервный сервер <span class="badge orange">Резерв</span></h2>
+  <h2>Резерв <span class="badge orange">Резерв</span></h2>
   <p class="h2sub">Прямое подключение к серверу</p>
-  <div class="link" id="vrw">${vlessRailway}</div>
-  <button class="btn grey" onclick="copy('vrw',this,'Скопировать резерв')">Скопировать резерв</button>
+  <div class="link" id="vbk">${vlessBackend}</div>
+  <button class="btn grey" onclick="copy('vbk',this,'Скопировать резерв')">Скопировать резерв</button>
 </div>` : ''}
 
 <div class="c">
@@ -300,7 +298,7 @@ ${vlessRailway ? `
 <div class="c">
   <h2>Параметры</h2>
   <div class="r"><span class="l">CF host</span><span class="v">${host}</span></div>
-  <div class="r"><span class="l">Backend host</span><span class="v">${RAILWAY_HOST}</span></div>
+  <div class="r"><span class="l">Backend</span><span class="v">${BACKEND_HOST}</span></div>
   ${vlessUuid ? `<div class="r"><span class="l">UUID</span><span class="v">${vlessUuid}</span></div>` : ''}
   <div class="r"><span class="l">Протокол</span><span class="v">VLESS+WS+TLS</span></div>
   <div class="r"><span class="l">Путь</span><span class="v">/vless</span></div>
