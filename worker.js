@@ -1,11 +1,12 @@
 /**
  * Cloudflare Worker — VLESS over WebSocket
- * Handles VLESS protocol directly using cloudflare:sockets (no backend needed)
+ * Uses cloudflare:sockets for direct TCP tunneling.
+ * UDP DNS queries are resolved via DNS-over-HTTPS (Google/Cloudflare).
  */
 
 import { connect } from 'cloudflare:sockets';
 
-const VLESS_UUID = 'f03e5c9e-16ae-484e-a405-c78695b1142a';
+const DEFAULT_UUID = 'f03e5c9e-16ae-484e-a405-c78695b1142a';
 
 export default {
   async fetch(request, env) {
@@ -14,229 +15,270 @@ export default {
     } catch (e) {
       return new Response('Worker error: ' + e.message, { status: 500 });
     }
-  }
+  },
 };
 
 async function handleRequest(request, env) {
-  const PROXY_USER = env.PROXY_USER || 'user';
-  const PROXY_PASS = env.PROXY_PASS || 'changeme';
-  const uuid = env.VLESS_UUID || VLESS_UUID;
-  const url  = new URL(request.url);
-  const host = request.headers.get('host') || url.host;
+  const uuid = env.VLESS_UUID || DEFAULT_UUID;
+  const reqUrl = new URL(request.url);
+  const host = request.headers.get('host') || reqUrl.host;
 
-  // ── VLESS WebSocket ───────────────────────────────────────────────────────
-  if (url.pathname === '/vless') {
-    if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
-      return new Response('WebSocket required', { status: 400 });
-    }
-    return handleVlessWS(request, uuid);
+  if (reqUrl.pathname === '/vless' &&
+      request.headers.get('upgrade')?.toLowerCase() === 'websocket') {
+    return vlessOverWS(request, uuid);
   }
 
-  // ── DNS-over-HTTPS ────────────────────────────────────────────────────────
-  if (url.pathname === '/dns-query') {
-    const target = new URL('https://dns.google/dns-query');
-    url.searchParams.forEach((v, k) => target.searchParams.set(k, v));
-    const up = await fetch(target.toString(), {
-      method: request.method,
-      headers: {
-        'accept': request.headers.get('accept') || 'application/dns-message',
-        ...(request.headers.get('content-type')
-          ? { 'content-type': request.headers.get('content-type') } : {}),
-      },
-      body: request.body || undefined,
-    });
-    return new Response(up.body, {
-      status: up.status,
-      headers: {
-        'content-type': up.headers.get('content-type') || 'application/dns-message',
-        'cache-control': 'max-age=300',
-        'access-control-allow-origin': '*',
-      },
+  if (reqUrl.pathname === '/') {
+    return new Response(makeUI(host, uuid), {
+      headers: { 'content-type': 'text/html;charset=utf-8' },
     });
   }
 
-  // ── Management routes ─────────────────────────────────────────────────────
-  if (request.method === 'GET' || request.method === 'HEAD') {
-    if (url.pathname === '/pac') {
-      return new Response(makePAC(host), {
-        headers: { 'content-type': 'application/x-ns-proxy-autoconfig' },
-      });
-    }
-    if (url.pathname === '/dns.mobileconfig') {
-      return new Response(new TextEncoder().encode(makeDNSMobileconfig(host)).buffer, {
-        headers: {
-          'Content-Type': 'application/x-apple-aspen-config',
-          'Content-Disposition': 'attachment; filename="dns-prox.mobileconfig"',
-          'Cache-Control': 'no-store',
-        },
-      });
-    }
-    if (url.pathname === '/profile.mobileconfig') {
-      return new Response(new TextEncoder().encode(makeMobileconfig(host, PROXY_USER, PROXY_PASS)).buffer, {
-        headers: {
-          'Content-Type': 'application/x-apple-aspen-config',
-          'Content-Disposition': 'attachment; filename="prox.mobileconfig"',
-          'Cache-Control': 'no-store',
-        },
-      });
-    }
-    if (url.pathname === '/' || url.pathname === '') {
-      return new Response(makeUI(host, uuid), {
-        headers: { 'content-type': 'text/html;charset=utf-8' },
-      });
-    }
+  if (reqUrl.pathname === '/pac') {
+    return new Response(makePAC(host), {
+      headers: { 'content-type': 'application/x-ns-proxy-autoconfig' },
+    });
+  }
+
+  if (reqUrl.pathname === '/dns.mobileconfig') {
+    return new Response(makeDNSMobileconfig(host), {
+      headers: {
+        'content-type': 'application/x-apple-aspen-config',
+        'content-disposition': 'attachment; filename="dns-prox.mobileconfig"',
+      },
+    });
   }
 
   return new Response('Not Found', { status: 404 });
 }
 
-// ── VLESS over WebSocket handler ─────────────────────────────────────────────
+// ─── VLESS over WebSocket ────────────────────────────────────────────────────
 
-async function handleVlessWS(request, uuid) {
-  const { 0: client, 1: server } = new WebSocketPair();
-  server.accept();
+async function vlessOverWS(request, uuid) {
+  const pair = new WebSocketPair();
+  const [client, ws] = Object.values(pair);
+  ws.accept();
 
-  let tcpSocket = null;
-  let remoteWriter = null;
-  let headerParsed = false;
+  const wsStream = wsReadableStream(ws);
 
-  const wsStream = new ReadableStream({
-    start(controller) {
-      server.addEventListener('message', ({ data }) => {
-        try {
-          const buf = data instanceof ArrayBuffer ? data
-            : typeof data === 'string' ? new TextEncoder().encode(data).buffer
-            : data;
-          controller.enqueue(new Uint8Array(buf));
-        } catch (_) {}
-      });
-      server.addEventListener('close',  () => { try { controller.close(); } catch (_) {} });
-      server.addEventListener('error',  () => { try { controller.error(new Error('ws')); } catch (_) {} });
-    },
-    cancel() { safeCloseWS(server); }
-  });
+  let remoteSocket = { value: null };
+  let udpWrite = null;
+  let isDns = false;
 
-  wsStream.pipeTo(new WritableStream({
-    async write(chunk) {
-      if (!headerParsed) {
-        headerParsed = true;
-
-        const parsed = parseVlessHeader(chunk, uuid);
-        if ('error' in parsed) {
-          safeCloseWS(server, 1002, parsed.error);
-          return;
-        }
-
-        const { version, remoteHost, remotePort, payload } = parsed;
-
-        try {
-          tcpSocket = connect({ hostname: remoteHost, port: remotePort });
-          remoteWriter = tcpSocket.writable.getWriter();
-
-          // VLESS response: [version, 0]
-          server.send(new Uint8Array([version, 0]));
-
-          if (payload.byteLength > 0) {
-            await remoteWriter.write(payload);
+  wsStream
+    .pipeTo(
+      new WritableStream({
+        async write(chunk, controller) {
+          // After header is parsed, route to TCP or DNS
+          if (isDns && udpWrite) {
+            return udpWrite(chunk);
+          }
+          if (remoteSocket.value) {
+            const w = remoteSocket.value.writable.getWriter();
+            await w.write(chunk);
+            w.releaseLock();
+            return;
           }
 
-          // Pipe remote TCP → WebSocket
-          (async () => {
-            try {
-              const reader = tcpSocket.readable.getReader();
-              for (;;) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                try { server.send(value); } catch (_) { break; }
-              }
-              reader.releaseLock();
-            } finally {
-              safeCloseWS(server);
-            }
-          })().catch(() => safeCloseWS(server));
+          // First chunk: parse VLESS header
+          const parsed = parseVlessHeader(chunk, uuid);
+          if (parsed.error) {
+            throw new Error(parsed.error);
+          }
 
-        } catch (e) {
-          safeCloseWS(server, 1011, String(e));
-        }
+          const { version, address, port, rawDataIndex, isUDP } = parsed;
+          const responseHeader = new Uint8Array([version, 0]);
+          const initialPayload = chunk.slice(rawDataIndex);
 
-      } else if (remoteWriter) {
-        try {
-          await remoteWriter.write(chunk);
-        } catch (_) {
-          safeCloseWS(server);
-        }
-      }
-    },
-    close() {
-      try { remoteWriter?.releaseLock(); } catch (_) {}
-      try { tcpSocket?.close(); } catch (_) {}
-    },
-    abort() {
-      try { remoteWriter?.releaseLock(); } catch (_) {}
-      try { tcpSocket?.close(); } catch (_) {}
-    }
-  })).catch(() => {
-    safeCloseWS(server);
-    try { tcpSocket?.close(); } catch (_) {}
-  });
+          if (isUDP) {
+            if (port !== 53) throw new Error('UDP only allowed for DNS (port 53)');
+            isDns = true;
+            udpWrite = await startDNS(ws, responseHeader);
+            if (initialPayload.byteLength > 0) udpWrite(initialPayload);
+            return;
+          }
+
+          // TCP
+          connectTCP(remoteSocket, address, port, initialPayload, ws, responseHeader);
+        },
+        close() {},
+        abort() { safeClose(ws); },
+      })
+    )
+    .catch(() => safeClose(ws));
 
   return new Response(null, { status: 101, webSocket: client });
 }
 
-function safeCloseWS(ws, code = 1000, reason = '') {
-  try {
-    if (ws.readyState === 1 || ws.readyState === 2) ws.close(code, reason);
-  } catch (_) {}
+// Build a ReadableStream from WebSocket messages
+function wsReadableStream(ws) {
+  return new ReadableStream({
+    start(controller) {
+      ws.addEventListener('message', ({ data }) => {
+        controller.enqueue(
+          data instanceof ArrayBuffer
+            ? new Uint8Array(data)
+            : typeof data === 'string'
+            ? new TextEncoder().encode(data)
+            : new Uint8Array(data)
+        );
+      });
+      ws.addEventListener('close', () => {
+        try { controller.close(); } catch (_) {}
+      });
+      ws.addEventListener('error', () => {
+        try { controller.error(new Error('ws error')); } catch (_) {}
+      });
+    },
+    cancel() { safeClose(ws); },
+  });
 }
 
-// ── VLESS header parser ───────────────────────────────────────────────────────
+// Establish outbound TCP connection and relay data
+async function connectTCP(remoteSocket, address, port, initialPayload, ws, responseHeader) {
+  try {
+    const tcp = connect({ hostname: address, port });
+    remoteSocket.value = tcp;
+
+    // Write initial payload (the data that came with the VLESS header)
+    if (initialPayload.byteLength > 0) {
+      const w = tcp.writable.getWriter();
+      await w.write(initialPayload);
+      w.releaseLock();
+    }
+
+    // Pipe TCP → WebSocket; prepend VLESS response header to the very first chunk
+    let headerSent = false;
+    await tcp.readable
+      .pipeTo(
+        new WritableStream({
+          write(chunk) {
+            if (ws.readyState !== 1 /* OPEN */) return;
+            if (!headerSent) {
+              headerSent = true;
+              const combined = new Uint8Array(responseHeader.byteLength + chunk.byteLength);
+              combined.set(responseHeader, 0);
+              combined.set(chunk, responseHeader.byteLength);
+              ws.send(combined);
+            } else {
+              ws.send(chunk);
+            }
+          },
+          close() {},
+          abort() {},
+        })
+      )
+      .catch(() => {});
+
+  } catch (e) {
+    safeClose(ws);
+  } finally {
+    safeClose(ws);
+  }
+}
+
+// Handle UDP DNS via DNS-over-HTTPS
+async function startDNS(ws, responseHeader) {
+  let headerSent = false;
+
+  const write = async (chunk) => {
+    // VLESS UDP: each packet prefixed with 2-byte big-endian length
+    let offset = 0;
+    while (offset < chunk.byteLength) {
+      const pktLen = (chunk[offset] << 8) | chunk[offset + 1];
+      offset += 2;
+      const dnsQuery = chunk.slice(offset, offset + pktLen);
+      offset += pktLen;
+      if (pktLen === 0) continue;
+
+      try {
+        const resp = await fetch('https://cloudflare-dns.com/dns-query', {
+          method: 'POST',
+          headers: { 'content-type': 'application/dns-message' },
+          body: dnsQuery,
+        });
+        const body = await resp.arrayBuffer();
+        const bodyBytes = new Uint8Array(body);
+
+        // 2-byte length prefix + DNS response body
+        const lenBuf = new Uint8Array(2);
+        lenBuf[0] = bodyBytes.byteLength >> 8;
+        lenBuf[1] = bodyBytes.byteLength & 0xff;
+
+        if (ws.readyState !== 1) return;
+
+        if (!headerSent) {
+          headerSent = true;
+          const combined = new Uint8Array(
+            responseHeader.byteLength + lenBuf.byteLength + bodyBytes.byteLength
+          );
+          combined.set(responseHeader, 0);
+          combined.set(lenBuf, responseHeader.byteLength);
+          combined.set(bodyBytes, responseHeader.byteLength + lenBuf.byteLength);
+          ws.send(combined);
+        } else {
+          const combined = new Uint8Array(lenBuf.byteLength + bodyBytes.byteLength);
+          combined.set(lenBuf, 0);
+          combined.set(bodyBytes, lenBuf.byteLength);
+          ws.send(combined);
+        }
+      } catch (_) {}
+    }
+  };
+
+  return write;
+}
+
+function safeClose(ws) {
+  try { if (ws.readyState < 2) ws.close(); } catch (_) {}
+}
+
+// ─── VLESS header parser ─────────────────────────────────────────────────────
 
 function parseVlessHeader(data, uuid) {
   if (data.byteLength < 24) return { error: 'header too short' };
 
-  let offset = 0;
-  const version = data[offset++];
+  const version = data[0];
 
-  // UUID: bytes 1–16
-  const uuidStr = bytesToUUID(data.slice(1, 17));
-  offset = 17;
-  if (uuidStr !== uuid) return { error: 'invalid uuid' };
+  const rxUUID = bytesToUUID(data.slice(1, 17));
+  if (rxUUID !== uuid) return { error: 'invalid UUID' };
 
-  // Addon
+  let offset = 17;
   const addonLen = data[offset++];
   offset += addonLen;
 
-  // Command: 0x01=TCP, 0x02=UDP
   const cmd = data[offset++];
-  if (cmd !== 0x01 && cmd !== 0x02) return { error: `unsupported cmd: ${cmd}` };
+  const isUDP = cmd === 0x02;
+  if (cmd !== 0x01 && cmd !== 0x02) return { error: `unsupported cmd 0x${cmd.toString(16)}` };
 
-  // Port (2 bytes big-endian)
-  const remotePort = (data[offset] << 8) | data[offset + 1];
+  const port = (data[offset] << 8) | data[offset + 1];
   offset += 2;
 
-  // Address
   const addrType = data[offset++];
-  let remoteHost;
+  let address;
 
   if (addrType === 0x01) {
-    remoteHost = `${data[offset]}.${data[offset+1]}.${data[offset+2]}.${data[offset+3]}`;
+    // IPv4
+    address = `${data[offset]}.${data[offset+1]}.${data[offset+2]}.${data[offset+3]}`;
     offset += 4;
   } else if (addrType === 0x02) {
+    // Domain
     const len = data[offset++];
-    remoteHost = new TextDecoder().decode(data.slice(offset, offset + len));
+    address = new TextDecoder().decode(data.slice(offset, offset + len));
     offset += len;
   } else if (addrType === 0x03) {
+    // IPv6
     const parts = [];
     for (let i = 0; i < 8; i++) {
       parts.push(((data[offset + i*2] << 8) | data[offset + i*2 + 1]).toString(16));
     }
-    remoteHost = `[${parts.join(':')}]`;
+    address = `[${parts.join(':')}]`;
     offset += 16;
   } else {
-    return { error: `unknown addr type: ${addrType}` };
+    return { error: `unknown addr type ${addrType}` };
   }
 
-  return { version, remoteHost, remotePort, payload: data.slice(offset) };
+  return { version, address, port, rawDataIndex: offset, isUDP };
 }
 
 function bytesToUUID(b) {
@@ -244,40 +286,7 @@ function bytesToUUID(b) {
   return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20,32)}`;
 }
 
-// ── Profile / UI generators ───────────────────────────────────────────────────
-
-function makeDNSMobileconfig(host) {
-  const rootId = crypto.randomUUID(), payloadId = crypto.randomUUID();
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>PayloadDisplayName</key><string>DNS через prox</string>
-  <key>PayloadIdentifier</key><string>com.prox.dns.${rootId}</string>
-  <key>PayloadRemovalDisallowed</key><false/>
-  <key>PayloadType</key><string>Configuration</string>
-  <key>PayloadUUID</key><string>${rootId}</string>
-  <key>PayloadVersion</key><integer>1</integer>
-  <key>PayloadContent</key>
-  <array>
-    <dict>
-      <key>PayloadDisplayName</key><string>DNS Settings</string>
-      <key>PayloadIdentifier</key><string>com.prox.dns.settings.${payloadId}</string>
-      <key>PayloadType</key><string>com.apple.dnsSettings.managed</string>
-      <key>PayloadUUID</key><string>${payloadId}</string>
-      <key>PayloadVersion</key><integer>1</integer>
-      <key>DNSSettings</key>
-      <dict>
-        <key>DNSProtocol</key><string>HTTPS</string>
-        <key>ServerURL</key><string>https://dns.google/dns-query</string>
-        <key>ServerAddresses</key>
-        <array><string>8.8.8.8</string><string>8.8.4.4</string></array>
-      </dict>
-    </dict>
-  </array>
-</dict>
-</plist>`;
-}
+// ─── UI & profiles ───────────────────────────────────────────────────────────
 
 function makePAC(host) {
   return `function FindProxyForURL(url, host) {
@@ -287,45 +296,37 @@ function makePAC(host) {
   if (isInNet(host, "172.16.0.0", "255.240.0.0")) return "DIRECT";
   if (isInNet(host, "192.168.0.0", "255.255.0.0")) return "DIRECT";
   return "HTTPS ${host}:443";
-}
-`;
+}`;
 }
 
-function makeMobileconfig(host, user, pass) {
-  const rootId = crypto.randomUUID(), payloadId = crypto.randomUUID();
+function makeDNSMobileconfig(host) {
+  const rootId = crypto.randomUUID(), pid = crypto.randomUUID();
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>PayloadDisplayName</key><string>prox</string>
-  <key>PayloadIdentifier</key><string>com.prox.cf.${rootId}</string>
+<plist version="1.0"><dict>
+  <key>PayloadDisplayName</key><string>DNS prox</string>
+  <key>PayloadIdentifier</key><string>com.prox.dns.${rootId}</string>
   <key>PayloadRemovalDisallowed</key><false/>
   <key>PayloadType</key><string>Configuration</string>
   <key>PayloadUUID</key><string>${rootId}</string>
   <key>PayloadVersion</key><integer>1</integer>
-  <key>PayloadContent</key>
-  <array>
-    <dict>
-      <key>PayloadDisplayName</key><string>Global HTTP Proxy</string>
-      <key>PayloadIdentifier</key><string>com.prox.proxy.${payloadId}</string>
-      <key>PayloadType</key><string>com.apple.proxy.http.global</string>
-      <key>PayloadUUID</key><string>${payloadId}</string>
-      <key>PayloadVersion</key><integer>1</integer>
-      <key>ProxyType</key><string>Auto</string>
-      <key>ProxyPACURL</key><string>https://${host}/pac</string>
-      <key>ProxyUsername</key><string>${user}</string>
-      <key>ProxyPassword</key><string>${pass}</string>
-      <key>ProxyCaptiveLoginAllowed</key><true/>
-      <key>ProxyPACFallbackAllowed</key><true/>
+  <key>PayloadContent</key><array><dict>
+    <key>PayloadDisplayName</key><string>DNS Settings</string>
+    <key>PayloadIdentifier</key><string>com.prox.dns.s.${pid}</string>
+    <key>PayloadType</key><string>com.apple.dnsSettings.managed</string>
+    <key>PayloadUUID</key><string>${pid}</string>
+    <key>PayloadVersion</key><integer>1</integer>
+    <key>DNSSettings</key><dict>
+      <key>DNSProtocol</key><string>HTTPS</string>
+      <key>ServerURL</key><string>https://cloudflare-dns.com/dns-query</string>
+      <key>ServerAddresses</key><array><string>1.1.1.1</string><string>1.0.0.1</string></array>
     </dict>
-  </array>
-</dict>
-</plist>`;
+  </dict></array>
+</dict></plist>`;
 }
 
 function makeUI(host, uuid) {
   const vlessLink = `vless://${uuid}@${host}:443?encryption=none&security=tls&type=ws&path=%2Fvless&host=${host}#prox`;
-
   return `<!DOCTYPE html>
 <html lang="ru"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -370,13 +371,13 @@ li::before{content:counter(s);position:absolute;left:0;top:8px;background:#34C75
   </ol>
   <div class="link" id="vl">${vlessLink}</div>
   <button class="btn" onclick="copy('vl',this,'Скопировать ссылку')">Скопировать ссылку</button>
-  <p class="note">Трафик: телефон → Cloudflare Edge → интернет. Без лимитов, без доп. сервера.</p>
+  <p class="note">Трафик: телефон → Cloudflare → интернет. Без лимитов.</p>
 </div>
 
 <div class="c">
-  <h2>DNS профиль (дополнительно)</h2>
-  <p style="font-size:14px;color:#3c3c43;margin-bottom:12px">Шифрует DNS запросы. Установи вместе с VPN.</p>
-  <a href="https://${host}/dns.mobileconfig" class="btn blue" style="text-decoration:none;color:white;display:block;padding:14px;text-align:center;border-radius:12px;font-size:16px;font-weight:600;margin-top:0">Скачать DNS профиль</a>
+  <h2>DNS профиль (рекомендуется)</h2>
+  <p style="font-size:14px;color:#3c3c43;margin-bottom:12px">Шифрует DNS запросы — установи вместе с VPN для надёжной работы.</p>
+  <a href="/dns.mobileconfig" class="btn blue" style="text-decoration:none;color:white;display:block;padding:14px;text-align:center;border-radius:12px;font-size:16px;font-weight:600;margin-top:0">Скачать DNS профиль</a>
 </div>
 
 <div class="c">
