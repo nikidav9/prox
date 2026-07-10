@@ -1,9 +1,9 @@
 /**
- * Cloudflare Worker — VLESS relay via backend
+ * Cloudflare Worker — VLESS relay via Railway backend
  * /vless → WebSocket bridge → Xray → internet
  */
 
-const BACKEND_HOST = 'prox-production-e4e0.up.railway.app';
+const BACKEND_HOST = 'prox-production-e818.up.railway.app';
 const BACKEND_WS   = `wss://${BACKEND_HOST}/vless`;
 
 export default {
