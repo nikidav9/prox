@@ -1,10 +1,7 @@
 /**
- * Cloudflare Worker — VLESS direct proxy via cloudflare:sockets
- * /vless → direct TCP to destination (no Railway needed)
- * /cf-test?port=443 — test TCP socket connectivity
+ * Cloudflare Worker — VLESS relay via Railway backend
+ * /vless → WebSocket bridge → Railway Xray → internet
  */
-
-import { connect } from 'cloudflare:sockets';
 
 const RAILWAY_HOST = 'prox-production-e4e0.up.railway.app';
 const RAILWAY_WS   = `wss://${RAILWAY_HOST}/vless`;
@@ -26,33 +23,12 @@ async function handleRequest(request, env) {
   const url  = new URL(request.url);
   const host = request.headers.get('host') || url.host;
 
-  // ── VLESS direct proxy (cloudflare:sockets) ──────────────────────────────
+  // ── VLESS relay via Railway ───────────────────────────────────────────────
   if (url.pathname === '/vless') {
     if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
       return new Response('WebSocket required', { status: 400 });
     }
-    return handleVless(request, VLESS_UUID);
-  }
-
-  // ── TCP socket test ───────────────────────────────────────────────────────
-  // /cf-test?host=example.com&port=443
-  if (url.pathname === '/cf-test') {
-    const testHost = url.searchParams.get('host') || 'example.com';
-    const testPort = parseInt(url.searchParams.get('port') || '443', 10);
-    try {
-      const t0 = Date.now();
-      const sock = connect({ hostname: testHost, port: testPort });
-      await sock.opened;
-      const ms = Date.now() - t0;
-      try { sock.close(); } catch (_) {}
-      return new Response(
-        `CF sockets OK\nhost: ${testHost}:${testPort}\nconnect: ${ms}ms`,
-        { headers: { 'content-type': 'text/plain' } });
-    } catch (e) {
-      return new Response(
-        `CF sockets FAILED\nhost: ${testHost}:${testPort}\nerror: ${e.message}`,
-        { status: 500, headers: { 'content-type': 'text/plain' } });
-    }
+    return handleVlessRelay(request);
   }
 
   // ── DNS-over-HTTPS ────────────────────────────────────────────────────────
@@ -113,113 +89,8 @@ async function handleRequest(request, env) {
   return new Response('Not Found', { status: 404 });
 }
 
-// ── VLESS direct proxy via cloudflare:sockets ────────────────────────────────
-
-async function handleVless(request, vlessUuid) {
-  const { 0: client, 1: server } = new WebSocketPair();
-  server.accept();
-
-  const { readable, writable } = new TransformStream();
-  const tsWriter = writable.getWriter();
-  server.addEventListener('message', ({ data }) => { tsWriter.write(toU8(data)).catch(() => {}); });
-  server.addEventListener('close',   () => { tsWriter.close().catch(() => {}); });
-  server.addEventListener('error',   () => { tsWriter.abort(new Error('ws error')).catch(() => {}); });
-
-  proxyVless(server, readable, vlessUuid).catch(() => {
-    try { server.close(1011, 'proxy error'); } catch (_) {}
-  });
-
-  return new Response(null, { status: 101, webSocket: client });
-}
-
-async function proxyVless(ws, readable, vlessUuid) {
-  const reader = readable.getReader();
-  const { value: first, done } = await reader.read();
-  if (done || !first) return;
-
-  const parsed = parseVlessHeader(first, vlessUuid);
-  if (!parsed) { ws.close(1002, 'invalid VLESS header'); return; }
-
-  const { host, port, remainingData } = parsed;
-
-  let dest;
-  try {
-    dest = connect({ hostname: host, port });
-    await dest.opened;
-  } catch (e) {
-    ws.close(1011, `connect failed: ${host}:${port} — ${e.message}`);
-    return;
-  }
-
-  ws.send(new Uint8Array([0, 0]));
-
-  const destWriter = dest.writable.getWriter();
-  if (remainingData.length > 0) await destWriter.write(remainingData);
-
-  const pipeIn = (async () => {
-    try {
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        await destWriter.write(value);
-      }
-    } catch (_) {}
-    try { destWriter.close(); } catch (_) {}
-  })();
-
-  const pipeOut = (async () => {
-    const destReader = dest.readable.getReader();
-    try {
-      for (;;) {
-        const { value, done } = await destReader.read();
-        if (done) break;
-        ws.send(value);
-      }
-    } catch (_) {}
-    try { ws.close(1000, ''); } catch (_) {}
-  })();
-
-  await Promise.all([pipeIn, pipeOut]);
-}
-
-function toU8(data) {
-  if (data instanceof ArrayBuffer) return new Uint8Array(data);
-  if (data instanceof Uint8Array)  return data;
-  if (typeof data === 'string')    return new TextEncoder().encode(data);
-  return new Uint8Array(data);
-}
-
-function parseVlessHeader(buf, expectedUuid) {
-  try {
-    let off = 0;
-    if (buf[off++] !== 0) return null;
-    if (expectedUuid) {
-      const hex = [...buf.slice(off, off + 16)].map(b => b.toString(16).padStart(2, '0')).join('');
-      const uuid = `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
-      if (uuid !== expectedUuid) return null;
-    }
-    off += 16;
-    off += buf[off++];
-    if (buf[off++] !== 1) return null;
-    const port = (buf[off] << 8) | buf[off + 1]; off += 2;
-    const addrType = buf[off++];
-    let host;
-    if (addrType === 1) {
-      host = `${buf[off]}.${buf[off+1]}.${buf[off+2]}.${buf[off+3]}`; off += 4;
-    } else if (addrType === 2) {
-      const len = buf[off++];
-      host = new TextDecoder().decode(buf.slice(off, off + len)); off += len;
-    } else if (addrType === 3) {
-      const p = [];
-      for (let i = 0; i < 8; i++) { p.push(((buf[off] << 8) | buf[off+1]).toString(16)); off += 2; }
-      host = p.join(':');
-    } else return null;
-    return { host, port, remainingData: buf.slice(off) };
-  } catch (_) { return null; }
-}
-
-// ── VLESS WebSocket relay (fallback) ─────────────────────────────────────────
-// Bridges client ↔ Railway VLESS backend via two WebSocket connections.
+// ── VLESS WebSocket relay ────────────────────────────────────────────────────
+// Bridges client ↔ backend via two WebSocket connections.
 // Queues client messages until upstream opens to avoid drops.
 
 async function handleVlessRelay(request) {
@@ -409,15 +280,15 @@ ${vlessCF ? `
   </ol>
   <div class="link" id="vcf">${vlessCF}</div>
   <button class="btn" onclick="copy('vcf',this,'Скопировать Cloudflare')">Скопировать Cloudflare</button>
-  <p class="note">Трафик: телефон → Cloudflare Edge → Railway → интернет. Без лимитов.</p>
+  <p class="note">Трафик: телефон → Cloudflare Edge → сервер → интернет. Без лимитов.</p>
 </div>` : `<div class="c"><p style="color:#8e8e93">Загрузка...</p></div>`}
 
 ${vlessRailway ? `
 <div class="c">
-  <h2>Railway <span class="badge orange">Резерв</span></h2>
-  <p class="h2sub">Прямое подключение к серверу — если Cloudflare заблокирован</p>
+  <h2>Резервный сервер <span class="badge orange">Резерв</span></h2>
+  <p class="h2sub">Прямое подключение к серверу</p>
   <div class="link" id="vrw">${vlessRailway}</div>
-  <button class="btn grey" onclick="copy('vrw',this,'Скопировать Railway')">Скопировать Railway</button>
+  <button class="btn grey" onclick="copy('vrw',this,'Скопировать резерв')">Скопировать резерв</button>
 </div>` : ''}
 
 <div class="c">
@@ -429,7 +300,7 @@ ${vlessRailway ? `
 <div class="c">
   <h2>Параметры</h2>
   <div class="r"><span class="l">CF host</span><span class="v">${host}</span></div>
-  <div class="r"><span class="l">Railway host</span><span class="v">${RAILWAY_HOST}</span></div>
+  <div class="r"><span class="l">Backend host</span><span class="v">${RAILWAY_HOST}</span></div>
   ${vlessUuid ? `<div class="r"><span class="l">UUID</span><span class="v">${vlessUuid}</span></div>` : ''}
   <div class="r"><span class="l">Протокол</span><span class="v">VLESS+WS+TLS</span></div>
   <div class="r"><span class="l">Путь</span><span class="v">/vless</span></div>
