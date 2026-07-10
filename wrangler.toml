@@ -1,8 +1,8 @@
-name = "prox"
+name = "prox2"
 main = "worker.js"
 compatibility_date = "2024-09-23"
 
 [vars]
 PROXY_USER = "user"
 VLESS_UUID = "f03e5c9e-16ae-484e-a405-c78695b1142a"
-# Set PROXY_PASS via dashboard: Workers → prox → Settings → Variables
+# Set PROXY_PASS via dashboard: Workers → prox2 → Settings → Variables
