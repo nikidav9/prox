@@ -1,0 +1,14 @@
+{
+  "name": "prox",
+  "version": "1.0.0",
+  "description": "Self-hosted HTTP proxy with iOS mobileconfig generation",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "SERVER_HOST=localhost node src/server.js"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "license": "MIT"
+}
