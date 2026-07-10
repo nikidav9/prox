@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: prox
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: PORT
+        value: 8080
+      - key: XRAY_UUID
+        value: f03e5c9e-16ae-484e-a405-c78695b1142a
+      - key: SERVER_HOST
+        fromService:
+          type: web
+          name: prox
+          property: host
