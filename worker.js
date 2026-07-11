@@ -3,8 +3,6 @@
  * Handles VLESS protocol directly using cloudflare:sockets (no backend needed)
  */
 
-import { connect } from 'cloudflare:sockets';
-
 const VLESS_UUID = 'f03e5c9e-16ae-484e-a405-c78695b1142a';
 
 export default {
@@ -139,6 +137,7 @@ async function handleVlessWS(request, uuid) {
         }
 
         try {
+          const { connect } = await import('cloudflare:sockets');
           tcpSocket = connect({ hostname: remoteHost, port: remotePort });
           remoteWriter = tcpSocket.writable.getWriter();
 
