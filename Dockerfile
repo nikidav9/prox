@@ -1,10 +1,8 @@
 FROM node:22-alpine
 
-ARG XRAY_VER=v26.3.27
-
 RUN apk add --no-cache wget unzip && \
     wget -qO /tmp/xray.zip \
-      "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VER}/Xray-linux-64.zip" && \
+      "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip" && \
     unzip /tmp/xray.zip xray -d /usr/local/bin/ && \
     chmod +x /usr/local/bin/xray && \
     rm /tmp/xray.zip && \
