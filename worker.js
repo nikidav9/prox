@@ -95,6 +95,9 @@ async function handleRequest(request, env) {
 async function handleVlessWS(request, uuid) {
   const { 0: client, 1: server } = new WebSocketPair();
   server.accept();
+  // Without this the runtime delivers binary frames as Blob, and the
+  // synchronous Uint8Array conversion below silently yields zero bytes.
+  try { server.binaryType = 'arraybuffer'; } catch (_) {}
 
   let tcpSocket = null;
   let remoteWriter = null;
@@ -102,16 +105,24 @@ async function handleVlessWS(request, uuid) {
 
   const wsStream = new ReadableStream({
     start(controller) {
+      // Blob conversion is async, so chain every frame through one promise to
+      // keep them in wire order — reordering would corrupt the VLESS stream.
+      let queue = Promise.resolve();
+      const push = (fn) => { queue = queue.then(fn).catch(() => {}); };
+
       server.addEventListener('message', ({ data }) => {
-        try {
-          const buf = data instanceof ArrayBuffer ? data
-            : typeof data === 'string' ? new TextEncoder().encode(data).buffer
-            : data;
-          controller.enqueue(new Uint8Array(buf));
-        } catch (_) {}
+        push(async () => {
+          let bytes;
+          if (data instanceof ArrayBuffer) bytes = new Uint8Array(data);
+          else if (ArrayBuffer.isView(data)) bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+          else if (typeof data === 'string') bytes = new TextEncoder().encode(data);
+          else if (data && typeof data.arrayBuffer === 'function') bytes = new Uint8Array(await data.arrayBuffer());
+          else return;
+          if (bytes.byteLength > 0) controller.enqueue(bytes);
+        });
       });
-      server.addEventListener('close',  () => { try { controller.close(); } catch (_) {} });
-      server.addEventListener('error',  () => { try { controller.error(new Error('ws')); } catch (_) {} });
+      server.addEventListener('close',  () => { push(() => { try { controller.close(); } catch (_) {} }); });
+      server.addEventListener('error',  () => { push(() => { try { controller.error(new Error('ws')); } catch (_) {} }); });
     },
     cancel() { safeCloseWS(server); }
   });

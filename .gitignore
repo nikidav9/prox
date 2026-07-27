@@ -7,3 +7,5 @@ out
 next-env.d.ts
 .DS_Store
 .vercel
+.wrangler/
+node_modules/
