@@ -58,6 +58,9 @@ async function vlessOverWS(request, uuid) {
   const pair = new WebSocketPair();
   const [client, ws] = Object.values(pair);
   ws.accept();
+  // Without this the runtime delivers binary frames as Blob, and the
+  // synchronous Uint8Array conversion in wsReadableStream yields zero bytes.
+  try { ws.binaryType = 'arraybuffer'; } catch (_) {}
 
   const wsStream = wsReadableStream(ws);
 
@@ -114,20 +117,27 @@ async function vlessOverWS(request, uuid) {
 function wsReadableStream(ws) {
   return new ReadableStream({
     start(controller) {
+      // Blob conversion is async, so chain every frame through one promise to
+      // keep them in wire order — reordering would corrupt the VLESS stream.
+      let queue = Promise.resolve();
+      const push = (fn) => { queue = queue.then(fn).catch(() => {}); };
+
       ws.addEventListener('message', ({ data }) => {
-        controller.enqueue(
-          data instanceof ArrayBuffer
-            ? new Uint8Array(data)
-            : typeof data === 'string'
-            ? new TextEncoder().encode(data)
-            : new Uint8Array(data)
-        );
+        push(async () => {
+          let bytes;
+          if (data instanceof ArrayBuffer) bytes = new Uint8Array(data);
+          else if (ArrayBuffer.isView(data)) bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+          else if (typeof data === 'string') bytes = new TextEncoder().encode(data);
+          else if (data && typeof data.arrayBuffer === 'function') bytes = new Uint8Array(await data.arrayBuffer());
+          else return;
+          if (bytes.byteLength > 0) controller.enqueue(bytes);
+        });
       });
       ws.addEventListener('close', () => {
-        try { controller.close(); } catch (_) {}
+        push(() => { try { controller.close(); } catch (_) {} });
       });
       ws.addEventListener('error', () => {
-        try { controller.error(new Error('ws error')); } catch (_) {}
+        push(() => { try { controller.error(new Error('ws error')); } catch (_) {} });
       });
     },
     cancel() { safeClose(ws); },
