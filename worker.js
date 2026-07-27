@@ -29,6 +29,7 @@ async function handleRequest(request, env) {
     if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
       return new Response('WebSocket required', { status: 400 });
     }
+    console.log(`ws upgrade from ${request.headers.get('cf-connecting-ip') || '?'}`);
     return handleVlessWS(request, uuid);
   }
 
@@ -135,9 +136,11 @@ async function handleVlessWS(request, uuid) {
 
         const parsed = parseVlessHeader(chunk, uuid);
         if ('error' in parsed) {
+          console.log(`vless reject: ${parsed.error} (first chunk ${chunk.byteLength}b)`);
           safeCloseWS(server, 1002, parsed.error);
           return;
         }
+        console.log(`vless open ${parsed.isUDP ? 'udp' : 'tcp'} ${parsed.remoteHost}:${parsed.remotePort} payload=${parsed.payload.byteLength}b`);
 
         const { version, remoteHost, remotePort, isUDP, payload } = parsed;
 
@@ -180,6 +183,7 @@ async function handleVlessWS(request, uuid) {
           })().catch(() => safeCloseWS(server));
 
         } catch (e) {
+          console.log(`vless tcp failed ${remoteHost}:${remotePort} — ${String(e)}`);
           safeCloseWS(server, 1011, String(e));
         }
 
