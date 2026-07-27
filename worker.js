@@ -102,6 +102,7 @@ async function handleVlessWS(request, uuid) {
   let tcpSocket = null;
   let remoteWriter = null;
   let headerParsed = false;
+  let udpWrite = null;
 
   const wsStream = new ReadableStream({
     start(controller) {
@@ -138,7 +139,19 @@ async function handleVlessWS(request, uuid) {
           return;
         }
 
-        const { version, remoteHost, remotePort, payload } = parsed;
+        const { version, remoteHost, remotePort, isUDP, payload } = parsed;
+
+        // UDP is only meaningful for DNS here; anything else has no path out.
+        if (isUDP) {
+          if (remotePort !== 53) {
+            safeCloseWS(server, 1002, 'udp: only dns supported');
+            return;
+          }
+          server.send(new Uint8Array([version, 0]));
+          udpWrite = makeDNSRelay(server);
+          if (payload.byteLength > 0) udpWrite(payload);
+          return;
+        }
 
         try {
           tcpSocket = connect({ hostname: remoteHost, port: remotePort });
@@ -170,6 +183,8 @@ async function handleVlessWS(request, uuid) {
           safeCloseWS(server, 1011, String(e));
         }
 
+      } else if (udpWrite) {
+        udpWrite(chunk);
       } else if (remoteWriter) {
         try {
           await remoteWriter.write(chunk);
@@ -192,6 +207,47 @@ async function handleVlessWS(request, uuid) {
   });
 
   return new Response(null, { status: 101, webSocket: client });
+}
+
+// Workers cannot open UDP sockets, so DNS queries are resolved over HTTPS.
+// VLESS frames each UDP packet with a 2-byte big-endian length prefix; packets
+// can straddle WebSocket frames, so keep a buffer across calls.
+function makeDNSRelay(ws) {
+  let buffer = new Uint8Array(0);
+  let chain = Promise.resolve();
+
+  return (chunk) => {
+    const merged = new Uint8Array(buffer.byteLength + chunk.byteLength);
+    merged.set(buffer, 0);
+    merged.set(chunk, buffer.byteLength);
+    buffer = merged;
+
+    for (;;) {
+      if (buffer.byteLength < 2) break;
+      const len = (buffer[0] << 8) | buffer[1];
+      if (len === 0) { buffer = buffer.slice(2); continue; }
+      if (buffer.byteLength < 2 + len) break;
+
+      const query = buffer.slice(2, 2 + len);
+      buffer = buffer.slice(2 + len);
+
+      // Answers must go back in request order, so serialise the lookups.
+      chain = chain.then(async () => {
+        const resp = await fetch('https://dns.google/dns-query', {
+          method: 'POST',
+          headers: { 'content-type': 'application/dns-message' },
+          body: query,
+        });
+        const body = new Uint8Array(await resp.arrayBuffer());
+        if (ws.readyState !== 1) return;
+        const out = new Uint8Array(2 + body.byteLength);
+        out[0] = (body.byteLength >> 8) & 0xff;
+        out[1] = body.byteLength & 0xff;
+        out.set(body, 2);
+        ws.send(out);
+      }).catch(() => {});
+    }
+  };
 }
 
 function safeCloseWS(ws, code = 1000, reason = '') {
@@ -247,7 +303,7 @@ function parseVlessHeader(data, uuid) {
     return { error: `unknown addr type: ${addrType}` };
   }
 
-  return { version, remoteHost, remotePort, payload: data.slice(offset) };
+  return { version, remoteHost, remotePort, isUDP: cmd === 0x02, payload: data.slice(offset) };
 }
 
 function bytesToUUID(b) {
